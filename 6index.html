@@ -1,0 +1,1522 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ブラック or ホワイト？企業体験クイズ</title>
+
+<!-- Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-XXXXXXXXXX'); // ← ご自身のGA4 測定IDに差し替えてください
+</script>
+
+<!-- Google Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;700;900&family=Oswald:wght@400;700&display=swap" rel="stylesheet" />
+
+<!-- Firebase -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {
+  getFirestore, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, getDocs,
+  onSnapshot, query, orderBy, limit, increment, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+// ============================================================
+// ⚠️ ここを自分のFirebaseプロジェクトの設定に差し替えてください
+// ============================================================
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID",
+};
+
+let db;
+try {
+  const app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+} catch(e) { console.warn("Firebase init failed:", e); }
+
+// ========== USER ID ==========
+function getUserId() {
+  let id = localStorage.getItem("bw_user_id");
+  if (!id) {
+    id = "user_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    localStorage.setItem("bw_user_id", id);
+  }
+  return id;
+}
+
+// ========== RANKING ==========
+window._rankingUnsub = null;
+window.subscribeRanking = function(cb) {
+  if (!db) { cb([]); return; }
+  if (window._rankingUnsub) { window._rankingUnsub(); window._rankingUnsub = null; }
+  const q = query(collection(db, "rankings"), orderBy("score", "desc"), limit(10));
+  window._rankingUnsub = onSnapshot(q,
+    snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+    err  => { console.error(err); cb([]); }
+  );
+};
+window.unsubscribeRanking = function() {
+  if (window._rankingUnsub) { window._rankingUnsub(); window._rankingUnsub = null; }
+};
+
+// ========== QUESTIONS (Firestore) ==========
+window.loadQuestionsFromFirestore = async function() {
+  if (!db) return false;
+  try {
+    const bwSnap = await getDocs(query(collection(db, "questions_bw"), orderBy("id")));
+    const kqSnap = await getDocs(query(collection(db, "questions_kq"), orderBy("id")));
+    if (!bwSnap.empty) {
+      window._fsHasQuestions = true;
+      return {
+        bw: bwSnap.docs.map(d => d.data()),
+        kq: kqSnap.docs.map(d => d.data()),
+      };
+    }
+    return null;
+  } catch(e) { console.warn("loadQuestions error:", e); return null; }
+};
+
+window.saveQuestionToFirestore = async function(type, q) {
+  if (!db) return;
+  try {
+    await setDoc(doc(db, "questions_" + type, String(q.id)), q);
+  } catch(e) { console.error("saveQuestion error:", e); }
+};
+
+window.deleteQuestionFromFirestore = async function(type, id) {
+  if (!db) return;
+  try {
+    await deleteDoc(doc(db, "questions_" + type, String(id)));
+  } catch(e) { console.error("deleteQuestion error:", e); }
+};
+
+window.saveAllQuestionsToFirestore = async function(bwList, kqList) {
+  if (!db) return;
+  try {
+    await Promise.all([
+      ...bwList.map(q => setDoc(doc(db, "questions_bw", String(q.id)), q)),
+      ...kqList.map(q => setDoc(doc(db, "questions_kq", String(q.id)), q)),
+    ]);
+  } catch(e) { console.error("saveAllQuestions error:", e); }
+};
+
+window.saveScore = async function(nickname, pts) {
+  if (!db) return;
+  const userId = getUserId();
+  const ref = doc(db, "rankings", userId);
+  try {
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      await updateDoc(ref, { score: increment(pts), name: nickname || "ゲスト", updatedAt: serverTimestamp() });
+    } else {
+      await setDoc(ref, { name: nickname || "ゲスト", score: pts, updatedAt: serverTimestamp() });
+    }
+    return true;
+  } catch(err) { console.error("Score save error:", err); return false; }
+};
+</script>
+
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --black: #0a0a0f;
+  --dark: #12121a;
+  --card: #1a1a28;
+  --card2: #1e1e30;
+  --border: #2a2a40;
+  --border2: #35355a;
+  --white-col: #f0f4ff;
+  --accent-red: #ff3355;
+  --accent-blue: #00c8ff;
+  --accent-gold: #ffd700;
+  --accent-green: #00e676;
+  --accent-purple: #b060ff;
+  --text: #e8eaf6;
+  --text-dim: #8892b0;
+  --font: 'Zen Kaku Gothic New', sans-serif;
+  --font-display: 'Oswald', sans-serif;
+}
+body {
+  font-family: var(--font);
+  background: var(--black);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+.app {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  position: relative;
+}
+.app::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 10%, rgba(0,200,255,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 40% at 80% 80%, rgba(255,51,85,0.06) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+.screen { position: relative; z-index: 1; display: none; }
+.screen.active { display: block; }
+
+/* ─── HOME ─── */
+.home { padding: 0 20px 40px; }
+.home-header { text-align: center; padding: 28px 0 24px; }
+.home-badge {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 11px; letter-spacing: 3px;
+  color: var(--accent-gold);
+  border: 1px solid var(--accent-gold);
+  padding: 4px 12px; margin-bottom: 14px;
+}
+.home-title {
+  font-family: var(--font-display); font-size: 26px; line-height: 1.2; letter-spacing: 1px;
+  background: linear-gradient(135deg, var(--accent-red), var(--accent-blue));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  margin-bottom: 6px;
+}
+.home-subtitle { font-size: 12px; color: var(--text-dim); letter-spacing: 0.5px; }
+
+/* ─── NICKNAME (home chip) ─── */
+.nick-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(0,200,255,0.1); border: 1px solid rgba(0,200,255,0.25);
+  border-radius: 20px; padding: 5px 14px; margin-bottom: 20px;
+  cursor: pointer; transition: background 0.2s;
+}
+.nick-chip:hover { background: rgba(0,200,255,0.18); }
+.nick-chip-icon { font-size: 13px; }
+.nick-chip-text { font-size: 12px; color: var(--accent-blue); font-weight: 700; }
+.nick-chip-edit { font-size: 10px; color: var(--text-dim); margin-left: 2px; }
+
+/* ─── NICKNAME MODAL ─── */
+.nick-modal-input {
+  width: 100%; background: rgba(255,255,255,0.07); border: 1px solid var(--border2);
+  border-radius: 10px; color: var(--text); font-family: var(--font); font-size: 18px;
+  padding: 14px; outline: none; text-align: center;
+  transition: border-color 0.2s; margin-bottom: 16px;
+}
+.nick-modal-input:focus { border-color: var(--accent-blue); }
+.nick-modal-submit {
+  width: 100%; background: linear-gradient(135deg, var(--accent-blue), #0088cc);
+  border: none; border-radius: 10px; color: #fff; font-family: var(--font);
+  font-size: 15px; font-weight: 700; padding: 14px; cursor: pointer; margin-bottom: 10px;
+}
+.nick-modal-skip {
+  width: 100%; background: none; border: none;
+  color: var(--text-dim); font-family: var(--font); font-size: 13px;
+  padding: 8px; cursor: pointer;
+}
+
+/* ─── GAME CARDS ─── */
+.game-cards { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
+.game-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+  padding: 20px; cursor: pointer; transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+  position: relative; overflow: hidden;
+}
+.game-card:active { transform: scale(0.97); }
+.game-card:hover { border-color: rgba(255,255,255,0.2); box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+.game-card-icon { font-size: 34px; margin-bottom: 10px; }
+.game-card-tag {
+  display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: 1px;
+  padding: 2px 8px; border-radius: 4px; margin-bottom: 8px;
+}
+.tag-bw { background: rgba(255,51,85,0.2); color: var(--accent-red); border: 1px solid rgba(255,51,85,0.3); }
+.tag-kj { background: rgba(255,215,0,0.2); color: var(--accent-gold); border: 1px solid rgba(255,215,0,0.3); }
+.game-card-title { font-size: 17px; font-weight: 900; margin-bottom: 6px; }
+.game-card-desc { font-size: 12px; color: var(--text-dim); line-height: 1.6; }
+.game-card-arrow { position: absolute; right: 20px; top: 50%; transform: translateY(-50%); color: var(--text-dim); font-size: 24px; }
+
+/* ─── HOME RANKING ─── */
+.home-ranking {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 14px; padding: 16px; margin-bottom: 18px;
+}
+.home-ranking-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.home-ranking-title {
+  font-family: var(--font-display); font-size: 15px; color: var(--accent-gold); letter-spacing: 1px;
+  display: flex; align-items: center; gap: 6px;
+}
+.home-ranking-live { font-size: 10px; color: var(--accent-green); display: flex; align-items: center; gap: 4px; }
+.ranking-row {
+  display: flex; align-items: center; gap: 10px; padding: 7px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.ranking-row:last-child { border-bottom: none; }
+.rank-medal { font-size: 16px; min-width: 22px; text-align: center; }
+.rank-name { flex: 1; font-size: 13px; font-weight: 700; }
+.rank-pts { font-size: 14px; font-weight: 900; color: var(--accent-gold); }
+.rank-pts span { font-size: 10px; color: var(--text-dim); font-weight: 400; margin-left: 2px; }
+.rank-num-other { font-family: var(--font-display); font-size: 13px; color: var(--text-dim); min-width: 22px; text-align: center; }
+.rank-loading { text-align: center; padding: 12px; color: var(--text-dim); font-size: 13px; }
+.rank-empty-home { text-align: center; padding: 16px; color: var(--text-dim); font-size: 12px; line-height: 1.8; }
+
+/* ─── BOTTOM NAV ─── */
+.bottom-nav { display: flex; gap: 10px; margin-top: 4px; }
+.nav-btn {
+  flex: 1; background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  border-radius: 10px; color: var(--text-dim); font-family: var(--font);
+  font-size: 12px; padding: 10px 8px; cursor: pointer; transition: all 0.2s; text-align: center;
+}
+.nav-btn:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+
+/* ─── HEADER BAR ─── */
+.header-bar {
+  display: flex; align-items: center; padding: 16px 20px;
+  position: relative; border-bottom: 1px solid var(--border);
+}
+.back-btn { background: none; border: none; color: var(--text-dim); font-size: 22px; cursor: pointer; margin-right: 10px; padding: 0; line-height: 1; }
+.back-btn:hover { color: var(--text); }
+.header-title { font-size: 14px; font-weight: 700; flex: 1; }
+.header-badge { font-size: 10px; padding: 3px 8px; border-radius: 20px; font-weight: 700; }
+.badge-normal { background: rgba(0,200,255,0.2); color: var(--accent-blue); }
+.badge-hard { background: rgba(255,51,85,0.2); color: var(--accent-red); }
+
+/* ─── DIFFICULTY ─── */
+.diff-screen { padding: 20px; }
+.diff-title { font-size: 20px; font-weight: 900; text-align: center; margin: 20px 0 8px; }
+.diff-sub { font-size: 13px; color: var(--text-dim); text-align: center; margin-bottom: 32px; }
+.diff-cards { display: flex; flex-direction: column; gap: 14px; }
+.diff-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+  padding: 24px; cursor: pointer; transition: all 0.2s; text-align: center;
+}
+.diff-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+.diff-card-icon { font-size: 40px; margin-bottom: 10px; }
+.diff-card-name { font-size: 20px; font-weight: 900; margin-bottom: 6px; }
+.diff-card-desc { font-size: 12px; color: var(--text-dim); line-height: 1.6; }
+.diff-normal { border-color: rgba(0,200,255,0.3); }
+.diff-normal:hover { border-color: var(--accent-blue); }
+.diff-hard { border-color: rgba(255,51,85,0.3); }
+.diff-hard:hover { border-color: var(--accent-red); }
+.diff-mix { border-color: rgba(255,215,0,0.3); }
+.diff-mix:hover { border-color: var(--accent-gold); }
+
+/* ─── QUIZ ─── */
+.quiz-screen { padding: 0 0 40px; }
+.quiz-progress { padding: 12px 20px 0; }
+.progress-info { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.progress-num { font-size: 13px; color: var(--text-dim); }
+.progress-score { font-size: 13px; font-weight: 700; color: var(--accent-gold); }
+.progress-bar { height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; }
+.progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent-blue), var(--accent-red)); border-radius: 2px; transition: width 0.3s; }
+.quiz-body { padding: 20px; }
+.diff-chip {
+  display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: 1px;
+  padding: 3px 10px; border-radius: 20px; margin-bottom: 14px;
+}
+.quiz-question-text { font-size: 17px; font-weight: 700; line-height: 1.7; margin-bottom: 28px; }
+.bw-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+.bw-choice-btn {
+  border: 2px solid transparent; border-radius: 14px; padding: 20px 12px;
+  cursor: pointer; font-family: var(--font); font-weight: 900; font-size: 15px;
+  transition: all 0.2s; display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.bw-choice-btn .choice-icon { font-size: 32px; }
+.choice-black { background: rgba(10,10,15,0.8); border-color: rgba(255,255,255,0.15); color: var(--text); }
+.choice-black:hover:not(:disabled) { border-color: var(--accent-red); background: rgba(255,51,85,0.1); }
+.choice-white { background: rgba(240,244,255,0.06); border-color: rgba(255,255,255,0.15); color: var(--text); }
+.choice-white:hover:not(:disabled) { border-color: var(--accent-blue); background: rgba(0,200,255,0.08); }
+.choice-correct { border-color: var(--accent-green) !important; background: rgba(0,230,118,0.1) !important; }
+.choice-wrong { border-color: var(--accent-red) !important; background: rgba(255,51,85,0.1) !important; }
+.bw-choice-btn:disabled { cursor: default; }
+.explanation {
+  background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px; margin-bottom: 20px; animation: fadeIn 0.3s ease;
+}
+.explanation-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.answer-badge { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 20px; }
+.badge-correct { background: rgba(0,230,118,0.2); color: var(--accent-green); }
+.badge-wrong { background: rgba(255,51,85,0.2); color: var(--accent-red); }
+.explanation-text { font-size: 13px; color: var(--text-dim); line-height: 1.8; }
+.next-btn {
+  width: 100%; background: linear-gradient(135deg, var(--accent-blue), #0088cc);
+  border: none; border-radius: 12px; color: #fff; font-family: var(--font);
+  font-size: 16px; font-weight: 700; padding: 16px; cursor: pointer; transition: opacity 0.2s;
+}
+.next-btn:hover { opacity: 0.9; }
+
+/* ─── RESULT ─── */
+.result-screen { padding: 20px 20px 40px; }
+.result-hero { text-align: center; padding: 24px 0 28px; }
+.result-icon { font-size: 64px; margin-bottom: 16px; }
+.result-rank {
+  font-family: var(--font-display); font-size: 28px; font-weight: 700; margin-bottom: 8px;
+  background: linear-gradient(135deg, var(--accent-gold), #ff8c00);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.result-score-display { font-size: 48px; font-weight: 900; color: var(--text); }
+.result-score-unit { font-size: 24px; color: var(--text-dim); }
+.result-score-label { font-size: 13px; color: var(--text-dim); margin-top: 4px; }
+.result-message { font-size: 13px; color: var(--text-dim); line-height: 1.7; margin-top: 12px; }
+.firebase-save-msg {
+  font-size: 12px; color: var(--accent-green); text-align: center;
+  padding: 8px; margin-bottom: 12px; animation: fadeIn 0.5s ease;
+}
+.result-breakdown {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px; margin-bottom: 16px;
+}
+.breakdown-title { font-size: 11px; color: var(--text-dim); letter-spacing: 1px; margin-bottom: 12px; font-weight: 700; }
+.breakdown-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.breakdown-row:last-child { border-bottom: none; }
+.breakdown-val { font-weight: 700; }
+.val-correct { color: var(--accent-green); }
+.val-wrong { color: var(--accent-red); }
+.result-actions { display: flex; flex-direction: column; gap: 10px; }
+.btn-primary {
+  width: 100%; background: linear-gradient(135deg, var(--accent-red), #cc0033);
+  border: none; border-radius: 12px; color: #fff; font-family: var(--font);
+  font-size: 15px; font-weight: 700; padding: 16px; cursor: pointer; transition: opacity 0.2s;
+}
+.btn-primary:hover { opacity: 0.9; }
+.btn-secondary {
+  width: 100%; background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+  border-radius: 12px; color: var(--text); font-family: var(--font);
+  font-size: 15px; font-weight: 700; padding: 14px; cursor: pointer; transition: background 0.2s;
+}
+.btn-secondary:hover { background: rgba(255,255,255,0.1); }
+
+/* ─── KYUJIN ─── */
+.kyujin-screen { padding: 0 0 40px; }
+.job-ad-card {
+  background: linear-gradient(135deg, rgba(255,215,0,0.06), rgba(0,230,118,0.04));
+  border: 1px solid rgba(255,215,0,0.25); border-radius: 14px; padding: 18px; margin: 16px 20px;
+}
+.job-ad-header { border-bottom: 1px solid rgba(255,215,0,0.2); padding-bottom: 10px; margin-bottom: 12px; }
+.job-ad-title { font-size: 15px; font-weight: 900; line-height: 1.4; color: var(--accent-gold); }
+.job-ad-row { display: flex; gap: 6px; margin-bottom: 6px; font-size: 12px; }
+.job-ad-key { color: var(--text-dim); min-width: 56px; }
+.job-ad-val { color: var(--text); flex: 1; line-height: 1.5; }
+.job-ad-appeal {
+  background: rgba(255,255,255,0.04); border-radius: 8px; padding: 10px;
+  font-size: 12px; color: #ffeb80; line-height: 1.7; margin-top: 10px; font-style: italic;
+}
+.kq-question { padding: 0 20px 12px; font-size: 15px; font-weight: 700; line-height: 1.6; }
+.kq-choices { display: flex; flex-direction: column; gap: 8px; padding: 0 20px; }
+.kq-choice {
+  background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 10px;
+  padding: 13px 16px; text-align: left; cursor: pointer; font-family: var(--font);
+  font-size: 13px; color: var(--text); transition: all 0.2s; line-height: 1.5;
+}
+.kq-choice:hover:not(:disabled) { background: rgba(255,215,0,0.08); border-color: rgba(255,215,0,0.3); }
+.kq-choice:disabled { cursor: default; }
+.kq-correct { border-color: var(--accent-green) !important; background: rgba(0,230,118,0.1) !important; }
+.kq-wrong { border-color: var(--accent-red) !important; background: rgba(255,51,85,0.08) !important; }
+.kq-explanation {
+  margin: 16px 20px; background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px; animation: fadeIn 0.3s ease;
+}
+.kq-exp-text { font-size: 13px; color: var(--text-dim); line-height: 1.8; margin-bottom: 10px; }
+.kq-tip {
+  background: rgba(0,200,255,0.08); border: 1px solid rgba(0,200,255,0.2);
+  border-radius: 8px; padding: 10px; font-size: 12px; color: var(--accent-blue); line-height: 1.7;
+}
+
+/* ─── SETTINGS ─── */
+.settings-screen { padding: 20px; }
+.settings-section-title {
+  font-size: 11px; color: var(--accent-gold); letter-spacing: 1px; font-weight: 700;
+  margin-bottom: 12px; margin-top: 24px;
+}
+.settings-section-title:first-child { margin-top: 0; }
+.q-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.q-item {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; display: flex; align-items: flex-start; gap: 10px;
+}
+.q-item-text { flex: 1; font-size: 12px; line-height: 1.5; color: var(--text-dim); }
+.q-item-badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; margin-bottom: 4px; display: inline-block; margin-right: 4px; }
+.q-del-btn {
+  background: rgba(255,51,85,0.15); border: 1px solid rgba(255,51,85,0.3);
+  border-radius: 6px; color: var(--accent-red); font-size: 11px; padding: 4px 8px;
+  cursor: pointer; white-space: nowrap; flex-shrink: 0;
+}
+.q-edit-btn {
+  background: rgba(0,200,255,0.12); border: 1px solid rgba(0,200,255,0.3);
+  border-radius: 6px; color: var(--accent-blue); font-size: 11px; padding: 4px 8px;
+  cursor: pointer; white-space: nowrap; flex-shrink: 0;
+}
+.q-item-actions { display: flex; flex-direction: column; gap: 5px; align-items: flex-end; }
+/* ─── EDIT MODAL ─── */
+.edit-modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 200;
+  display: none; align-items: flex-start; justify-content: center;
+  padding: 20px; overflow-y: auto;
+}
+.edit-modal-overlay.active { display: flex; }
+.edit-modal-box {
+  background: var(--card2); border: 1px solid var(--border2);
+  border-radius: 18px; padding: 24px; width: 100%; max-width: 440px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6); margin: auto;
+}
+.edit-modal-title {
+  font-family: var(--font-display); font-size: 16px; margin-bottom: 18px;
+  color: var(--accent-blue); display: flex; align-items: center; gap: 8px;
+}
+.edit-modal-actions { display: flex; gap: 10px; margin-top: 18px; }
+.edit-save-btn {
+  flex: 1; background: linear-gradient(135deg, var(--accent-blue), #0088cc);
+  border: none; border-radius: 10px; color: #fff; font-family: var(--font);
+  font-size: 14px; font-weight: 700; padding: 13px; cursor: pointer;
+}
+.edit-cancel-btn {
+  flex: 1; background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+  border-radius: 10px; color: var(--text-dim); font-family: var(--font);
+  font-size: 14px; padding: 13px; cursor: pointer;
+}
+.add-form {
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px; margin-bottom: 8px;
+}
+.form-label { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; margin-top: 12px; display: block; }
+.form-label:first-child { margin-top: 0; }
+.form-input, .form-textarea, .form-select {
+  width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text); font-family: var(--font);
+  font-size: 13px; padding: 10px 12px; outline: none; resize: vertical; transition: border-color 0.2s;
+}
+.form-input:focus, .form-textarea:focus, .form-select:focus { border-color: var(--accent-blue); }
+.form-select option { background: var(--dark); }
+.form-radio-group { display: flex; gap: 10px; }
+.form-radio {
+  flex: 1; background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px; cursor: pointer; text-align: center;
+  font-size: 13px; font-family: var(--font); color: var(--text-dim); transition: all 0.2s;
+}
+.form-radio.active-black { border-color: var(--accent-red); background: rgba(255,51,85,0.1); color: var(--accent-red); }
+.form-radio.active-white { border-color: var(--accent-blue); background: rgba(0,200,255,0.1); color: var(--accent-blue); }
+.add-btn {
+  width: 100%; background: linear-gradient(135deg, var(--accent-green), #00aa55);
+  border: none; border-radius: 10px; color: #000; font-family: var(--font);
+  font-size: 14px; font-weight: 900; padding: 13px; cursor: pointer; margin-top: 14px;
+}
+.reset-btn {
+  width: 100%; background: rgba(255,51,85,0.1); border: 1px solid rgba(255,51,85,0.3);
+  border-radius: 10px; color: var(--accent-red); font-family: var(--font);
+  font-size: 13px; padding: 12px; cursor: pointer; margin-top: 8px;
+}
+.tab-bar { display: flex; border-bottom: 1px solid var(--border); }
+.tab-btn {
+  flex: 1; padding: 12px; background: none; border: none;
+  border-bottom: 2px solid transparent; color: var(--text-dim);
+  font-family: var(--font); font-size: 13px; cursor: pointer; font-weight: 400; transition: all 0.2s;
+}
+.tab-btn.active { border-bottom-color: var(--accent-blue); color: var(--accent-blue); font-weight: 700; }
+
+/* ─── PASSWORD MODAL ─── */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100;
+  display: none; align-items: center; justify-content: center; padding: 20px;
+  animation: fadeIn 0.2s ease;
+}
+.modal-overlay.active { display: flex; }
+.modal-box {
+  background: var(--card2); border: 1px solid var(--border2);
+  border-radius: 18px; padding: 28px 24px; width: 100%; max-width: 360px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+}
+.modal-icon { font-size: 36px; text-align: center; margin-bottom: 12px; }
+.modal-title { font-family: var(--font-display); font-size: 18px; text-align: center; margin-bottom: 6px; }
+.modal-sub { font-size: 12px; color: var(--text-dim); text-align: center; margin-bottom: 20px; }
+.modal-input {
+  width: 100%; background: rgba(255,255,255,0.07); border: 1px solid var(--border2);
+  border-radius: 10px; color: var(--text); font-family: var(--font); font-size: 20px;
+  padding: 14px; outline: none; text-align: center; letter-spacing: 6px;
+  transition: border-color 0.2s; margin-bottom: 6px;
+}
+.modal-input:focus { border-color: var(--accent-blue); }
+.modal-error { font-size: 12px; color: var(--accent-red); text-align: center; min-height: 18px; margin-bottom: 16px; }
+.modal-actions { display: flex; gap: 10px; }
+.modal-cancel {
+  flex: 1; background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+  border-radius: 10px; color: var(--text-dim); font-family: var(--font); font-size: 14px;
+  padding: 13px; cursor: pointer; transition: background 0.2s;
+}
+.modal-submit {
+  flex: 1; background: linear-gradient(135deg, var(--accent-purple), #8040cc);
+  border: none; border-radius: 10px; color: #fff; font-family: var(--font);
+  font-size: 14px; font-weight: 700; padding: 13px; cursor: pointer;
+}
+
+/* ─── ANIMATIONS ─── */
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+.live-dot {
+  display: inline-block; width: 7px; height: 7px; background: var(--accent-green);
+  border-radius: 50%; margin-right: 5px; animation: pulse 1.5s infinite; vertical-align: middle;
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ========== HOME ========== -->
+  <div id="screen-home" class="screen active home">
+    <div class="home-header">
+      <div class="home-badge">QUIZ GAME</div>
+      <div class="home-title">ブラック or ホワイト？<br>企業体験</div>
+      <div class="home-subtitle">～社会の闇を暴露せよ～</div>
+    </div>
+    <div style="text-align:center">
+      <div class="nick-chip" id="nickChip" onclick="openNickModal()">
+        <span class="nick-chip-icon">⚡</span>
+        <span class="nick-chip-text" id="nickChipText">ニックネームを設定</span>
+        <span class="nick-chip-edit" id="nickChipEdit">✎</span>
+      </div>
+    </div>
+    <div class="game-cards">
+      <div class="game-card" onclick="goToBWDiff()">
+        <div class="game-card-icon">⚖️</div>
+        <div class="game-card-tag tag-bw">GAME 1</div>
+        <div class="game-card-title">ブラック企業診断</div>
+        <div class="game-card-desc">○×クイズ形式でブラック/ホワイトを判定！<br>あなたの社会人リテラシーを試せ</div>
+        <div class="game-card-arrow">›</div>
+      </div>
+      <div class="game-card" onclick="goToKyujin()">
+        <div class="game-card-icon">📋</div>
+        <div class="game-card-tag tag-kj">GAME 2</div>
+        <div class="game-card-title">求人広告のウソを見抜け</div>
+        <div class="game-card-desc">架空の求人票から怪しい箇所を発見！<br>就活で役立つ本物の知識が身につく</div>
+        <div class="game-card-arrow">›</div>
+      </div>
+    </div>
+    <div class="home-ranking">
+      <div class="home-ranking-header">
+        <div class="home-ranking-title">🏆 TOP RANKING</div>
+        <div class="home-ranking-live"><span class="live-dot"></span>LIVE</div>
+      </div>
+      <div id="rankingList"><div class="rank-loading">読み込み中...</div></div>
+    </div>
+    <div class="bottom-nav">
+      <button class="nav-btn" onclick="openSettingsModal()">⚙️ 問題管理</button>
+    </div>
+  </div>
+
+  <!-- ========== BW DIFFICULTY ========== -->
+  <div id="screen-bw-diff" class="screen">
+    <div class="header-bar">
+      <button class="back-btn" onclick="showScreen('home')">‹</button>
+      <div class="header-title">ブラック企業診断</div>
+    </div>
+    <div class="diff-screen">
+      <div class="diff-title">難易度を選んでください</div>
+      <div class="diff-sub">問題はランダムに出題されます</div>
+      <div class="diff-cards">
+        <div class="diff-card diff-normal" onclick="startBWQuiz('normal')">
+          <div class="diff-card-icon">🌙</div>
+          <div class="diff-card-name" style="color:var(--accent-blue)">ふつう</div>
+          <div class="diff-card-desc">基本的な労働法・ブラック企業の特徴<br>学生でもわかる問題レベル</div>
+        </div>
+        <div class="diff-card diff-hard" onclick="startBWQuiz('hard')">
+          <div class="diff-card-icon">🔥</div>
+          <div class="diff-card-name" style="color:var(--accent-red)">むずかしい</div>
+          <div class="diff-card-desc">法律の細かい知識・グレーゾーンの問題<br>社会人でも悩む問題レベル</div>
+        </div>
+        <div class="diff-card diff-mix" onclick="startBWQuiz('all')">
+          <div class="diff-card-icon">⚡</div>
+          <div class="diff-card-name" style="color:var(--accent-gold)">ランダムMIX</div>
+          <div class="diff-card-desc">全難易度の問題をシャッフル！<br>本番さながらの実力チェック</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== BW QUIZ ========== -->
+  <div id="screen-bw-quiz" class="screen">
+    <div class="header-bar">
+      <button class="back-btn" onclick="showScreen('bw-diff')">‹</button>
+      <div class="header-title">ブラック企業診断</div>
+      <div class="header-badge" id="bwDiffBadge"></div>
+    </div>
+    <div class="quiz-screen">
+      <div class="quiz-progress">
+        <div class="progress-info">
+          <span class="progress-num" id="bwProgressNum"></span>
+          <span class="progress-score" id="bwProgressScore"></span>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" id="bwProgressFill"></div></div>
+      </div>
+      <div class="quiz-body">
+        <div class="diff-chip" id="bwDiffChip"></div>
+        <div class="quiz-question-text" id="bwQuestion"></div>
+        <div class="bw-choices">
+          <button class="bw-choice-btn choice-black" id="btnBlack" onclick="answerBW('black')">
+            <span class="choice-icon">🖤</span><span>ブラック企業</span>
+          </button>
+          <button class="bw-choice-btn choice-white" id="btnWhite" onclick="answerBW('white')">
+            <span class="choice-icon">🤍</span><span>ホワイト企業</span>
+          </button>
+        </div>
+        <div class="explanation" id="bwExplanation" style="display:none">
+          <div class="explanation-header">
+            <span class="answer-badge" id="bwAnswerBadge"></span>
+            <span style="font-size:12px;color:var(--text-dim)" id="bwCorrectAnswer"></span>
+          </div>
+          <div class="explanation-text" id="bwExplanationText"></div>
+        </div>
+        <button class="next-btn" id="bwNextBtn" style="display:none" onclick="nextBWQuestion()"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== BW RESULT ========== -->
+  <div id="screen-bw-result" class="screen result-screen">
+    <div class="result-hero">
+      <div class="result-icon" id="bwResultIcon"></div>
+      <div class="result-rank" id="bwResultRank"></div>
+      <div class="result-score-display"><span id="bwResultScore"></span><span class="result-score-unit"> / <span id="bwResultTotal"></span></span></div>
+      <div class="result-score-label">問正解</div>
+      <div class="result-message" id="bwResultMessage"></div>
+    </div>
+    <div class="firebase-save-msg" id="bwSaveMsg" style="display:none">🔥 スコアがランキングに保存されました！</div>
+    <div class="result-breakdown">
+      <div class="breakdown-title">RESULT</div>
+      <div class="breakdown-row"><span>プレイヤー</span><span class="breakdown-val" id="bwResultPlayer"></span></div>
+      <div class="breakdown-row"><span>正解数</span><span class="breakdown-val val-correct" id="bwResultCorrect"></span></div>
+      <div class="breakdown-row"><span>不正解数</span><span class="breakdown-val val-wrong" id="bwResultWrong"></span></div>
+      <div class="breakdown-row"><span>正答率</span><span class="breakdown-val" id="bwResultPct"></span></div>
+      <div class="breakdown-row"><span>称号</span><span class="breakdown-val" id="bwResultTitle" style="color:var(--accent-gold)"></span></div>
+    </div>
+    <div class="result-actions">
+      <button class="btn-primary" onclick="showScreen('bw-diff')">もう一度チャレンジ</button>
+      <button class="btn-secondary" onclick="showScreen('home')">ホームに戻る</button>
+    </div>
+  </div>
+
+  <!-- ========== KQ DIFFICULTY ========== -->
+  <div id="screen-kq-diff" class="screen">
+    <div class="header-bar">
+      <button class="back-btn" onclick="showScreen('home')">‹</button>
+      <div class="header-title">求人広告のウソを見抜け</div>
+    </div>
+    <div class="diff-screen">
+      <div class="diff-title">難易度を選んでください</div>
+      <div class="diff-sub">求人票からウソを見抜け！ランダム10問出題</div>
+      <div class="diff-cards">
+        <div class="diff-card diff-normal" onclick="startKyujinQuiz('normal')">
+          <div class="diff-card-icon">📋</div>
+          <div class="diff-card-name" style="color:var(--accent-blue)">ふつう</div>
+          <div class="diff-card-desc">わかりやすいブラック表現・典型的な危険ワード<br>就活初心者でも気づける問題レベル</div>
+        </div>
+        <div class="diff-card diff-hard" onclick="startKyujinQuiz('hard')">
+          <div class="diff-card-icon">🔍</div>
+          <div class="diff-card-name" style="color:var(--accent-red)">むずかしい</div>
+          <div class="diff-card-desc">法律・制度の知識が必要なグレーゾーン<br>社会人でも騙される問題レベル</div>
+        </div>
+        <div class="diff-card diff-mix" onclick="startKyujinQuiz('all')">
+          <div class="diff-card-icon">⚡</div>
+          <div class="diff-card-name" style="color:var(--accent-gold)">ランダムMIX</div>
+          <div class="diff-card-desc">全難易度シャッフル！本番さながらの実力チェック</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== KYUJIN QUIZ ========== -->
+  <div id="screen-kyujin" class="screen kyujin-screen">
+    <div class="header-bar">
+      <button class="back-btn" onclick="showScreen('kq-diff')">‹</button>
+      <div class="header-title">求人広告のウソを見抜け</div>
+      <div class="header-badge badge-hard" id="kqProgress"></div>
+    </div>
+    <div class="job-ad-card">
+      <div class="job-ad-header"><div class="job-ad-title" id="kqAdTitle"></div></div>
+      <div id="kqAdRows"></div>
+      <div class="job-ad-appeal" id="kqAdAppeal"></div>
+    </div>
+    <div class="kq-question" id="kqQuestion"></div>
+    <div class="kq-choices" id="kqChoices"></div>
+    <div class="kq-explanation" id="kqExplanation" style="display:none">
+      <div class="answer-badge" id="kqAnswerBadge" style="margin-bottom:10px;display:inline-block"></div>
+      <div class="kq-exp-text" id="kqExpText"></div>
+      <div class="kq-tip" id="kqTip"></div>
+      <button class="next-btn" style="margin-top:14px" onclick="nextKQQuestion()">次へ</button>
+    </div>
+  </div>
+
+  <!-- ========== KQ RESULT ========== -->
+  <div id="screen-kq-result" class="screen result-screen">
+    <div class="result-hero">
+      <div class="result-icon" id="kqResultIcon"></div>
+      <div class="result-rank" id="kqResultRank"></div>
+      <div class="result-score-display"><span id="kqResultScore"></span><span class="result-score-unit"> / <span id="kqResultTotal"></span></span></div>
+      <div class="result-score-label">問正解</div>
+      <div class="result-message" id="kqResultMessage"></div>
+    </div>
+    <div class="result-breakdown">
+      <div class="breakdown-title">RESULT</div>
+      <div class="breakdown-row"><span>プレイヤー</span><span class="breakdown-val" id="kqResultPlayer"></span></div>
+      <div class="breakdown-row"><span>正解数</span><span class="breakdown-val val-correct" id="kqResultCorrect"></span></div>
+      <div class="breakdown-row"><span>正答率</span><span class="breakdown-val" id="kqResultPct"></span></div>
+    </div>
+    <div class="result-actions">
+      <button class="btn-primary" onclick="showScreen('kq-diff')">もう一度チャレンジ</button>
+      <button class="btn-secondary" onclick="showScreen('home')">ホームに戻る</button>
+    </div>
+  </div>
+
+  <!-- ========== SETTINGS ========== -->
+  <div id="screen-settings" class="screen">
+    <div class="header-bar">
+      <button class="back-btn" onclick="showScreen('home')">‹</button>
+      <div class="header-title">⚙️ 問題管理</div>
+    </div>
+    <div class="tab-bar">
+      <button class="tab-btn active" id="tabBtnBW" onclick="switchTab('bw')">⚖️ ブラック診断</button>
+      <button class="tab-btn" id="tabBtnKQ" onclick="switchTab('kyujin')">📋 求人ウソ問題</button>
+    </div>
+    <div class="settings-screen">
+      <div id="settingsBW">
+        <div class="settings-section-title"><span class="live-dot"></span>現在の問題一覧</div>
+        <div class="q-list" id="bwQList"></div>
+        <div class="settings-section-title">➕ 問題を追加</div>
+        <div class="add-form">
+          <label class="form-label">問題文</label>
+          <textarea class="form-textarea" id="addBWQuestion" rows="3" placeholder="例: 入社後に残業代が出なかった..."></textarea>
+          <label class="form-label">正解</label>
+          <div class="form-radio-group">
+            <button class="form-radio active-black" id="radioBlack" onclick="selectAnswer('black')">🖤 ブラック</button>
+            <button class="form-radio" id="radioWhite" onclick="selectAnswer('white')">🤍 ホワイト</button>
+          </div>
+          <label class="form-label">難易度</label>
+          <select class="form-select" id="addBWDifficulty">
+            <option value="normal">ふつう</option>
+            <option value="hard">むずかしい</option>
+          </select>
+          <label class="form-label">解説</label>
+          <textarea class="form-textarea" id="addBWExplanation" rows="3" placeholder="解説テキスト"></textarea>
+          <button class="add-btn" onclick="addBWQuestion()">+ 問題を追加する</button>
+        </div>
+      </div>
+      <div id="settingsKQ" style="display:none">
+        <div class="settings-section-title"><span class="live-dot"></span>現在の問題一覧</div>
+        <div class="q-list" id="kqQList"></div>
+        <div class="settings-section-title">➕ 求人問題を追加</div>
+        <div class="add-form">
+          <label class="form-label">会社名・タイトル</label>
+          <input class="form-input" id="kqTitle" placeholder="例: 株式会社〇〇｜営業スタッフ募集" />
+          <label class="form-label">給与</label>
+          <input class="form-input" id="kqSalary" placeholder="例: 月給20万円～" />
+          <label class="form-label">時間</label>
+          <input class="form-input" id="kqHours" placeholder="例: 9:00～18:00" />
+          <label class="form-label">休日</label>
+          <input class="form-input" id="kqHoliday" placeholder="例: 土日祝休み" />
+          <label class="form-label">福利厚生</label>
+          <input class="form-input" id="kqWelfare" placeholder="例: 社会保険完備" />
+          <label class="form-label">アピール文</label>
+          <textarea class="form-textarea" id="kqAppeal" rows="2" placeholder="未経験歓迎！..."></textarea>
+          <label class="form-label">難易度</label>
+          <select class="form-select" id="kqDifficulty">
+            <option value="normal">ふつう</option>
+            <option value="hard">むずかしい</option>
+          </select>
+          <label class="form-label">設問文</label>
+          <textarea class="form-textarea" id="kqQuestionInput" rows="2"></textarea>
+          <label class="form-label">選択肢A</label><input class="form-input" id="kqC0" />
+          <label class="form-label">選択肢B</label><input class="form-input" id="kqC1" />
+          <label class="form-label">選択肢C</label><input class="form-input" id="kqC2" />
+          <label class="form-label">選択肢D</label><input class="form-input" id="kqC3" />
+          <label class="form-label">正解 (0=A, 1=B, 2=C, 3=D)</label>
+          <select class="form-select" id="kqAnswer">
+            <option value="0">A</option><option value="1">B</option>
+            <option value="2">C</option><option value="3">D</option>
+          </select>
+          <label class="form-label">解説</label>
+          <textarea class="form-textarea" id="kqExplanationInput" rows="3"></textarea>
+          <label class="form-label">💡 就活ポイント</label>
+          <textarea class="form-textarea" id="kqTipInput" rows="2"></textarea>
+          <button class="add-btn" onclick="addKQQuestion()">+ 問題を追加する</button>
+        </div>
+      </div>
+      <button class="reset-btn" onclick="resetAll()">⚠️ 全データをリセット</button>
+    </div>
+  </div>
+
+</div><!-- /app -->
+
+<!-- Nickname Modal -->
+<div class="modal-overlay" id="nickModal">
+  <div class="modal-box">
+    <div class="modal-icon">⚡</div>
+    <div class="modal-title">ニックネーム設定</div>
+    <div class="modal-sub">ランキングに表示される名前を入力してください</div>
+    <input class="nick-modal-input" id="nickModalInput" type="text" maxlength="12" placeholder="例: たろう" />
+    <button class="nick-modal-submit" onclick="submitNickModal()">決定してはじめる</button>
+
+  </div>
+</div>
+
+<!-- BW Edit Modal -->
+<div class="edit-modal-overlay" id="editBWModal">
+  <div class="edit-modal-box">
+    <div class="edit-modal-title">✏️ ブラック診断 問題を編集</div>
+    <input type="hidden" id="editBWId" />
+    <label class="form-label">問題文</label>
+    <textarea class="form-textarea" id="editBWQuestion" rows="3"></textarea>
+    <label class="form-label">正解</label>
+    <div class="form-radio-group">
+      <button class="form-radio" id="editRadioBlack" onclick="editSelectAnswer('black')">🖤 ブラック</button>
+      <button class="form-radio" id="editRadioWhite" onclick="editSelectAnswer('white')">🤍 ホワイト</button>
+    </div>
+    <label class="form-label">難易度</label>
+    <select class="form-select" id="editBWDifficulty">
+      <option value="normal">ふつう</option>
+      <option value="hard">むずかしい</option>
+    </select>
+    <label class="form-label">解説</label>
+    <textarea class="form-textarea" id="editBWExplanation" rows="3"></textarea>
+    <div class="edit-modal-actions">
+      <button class="edit-cancel-btn" onclick="closeEditBWModal()">キャンセル</button>
+      <button class="edit-save-btn" onclick="saveEditBW()">💾 保存する</button>
+    </div>
+  </div>
+</div>
+
+<!-- KQ Edit Modal -->
+<div class="edit-modal-overlay" id="editKQModal">
+  <div class="edit-modal-box">
+    <div class="edit-modal-title">✏️ 求人問題を編集</div>
+    <input type="hidden" id="editKQId" />
+    <label class="form-label">会社名・タイトル</label>
+    <input class="form-input" id="editKQTitle" />
+    <label class="form-label">給与</label>
+    <input class="form-input" id="editKQSalary" />
+    <label class="form-label">時間</label>
+    <input class="form-input" id="editKQHours" />
+    <label class="form-label">休日</label>
+    <input class="form-input" id="editKQHoliday" />
+    <label class="form-label">福利厚生</label>
+    <input class="form-input" id="editKQWelfare" />
+    <label class="form-label">アピール文</label>
+    <textarea class="form-textarea" id="editKQAppeal" rows="2"></textarea>
+    <label class="form-label">設問文</label>
+    <textarea class="form-textarea" id="editKQQuestion" rows="2"></textarea>
+    <label class="form-label">選択肢A</label><input class="form-input" id="editKQC0" />
+    <label class="form-label">選択肢B</label><input class="form-input" id="editKQC1" />
+    <label class="form-label">選択肢C</label><input class="form-input" id="editKQC2" />
+    <label class="form-label">選択肢D</label><input class="form-input" id="editKQC3" />
+    <label class="form-label">正解 (0=A, 1=B, 2=C, 3=D)</label>
+    <select class="form-select" id="editKQAnswer">
+      <option value="0">A</option><option value="1">B</option>
+      <option value="2">C</option><option value="3">D</option>
+    </select>
+    <label class="form-label">解説</label>
+    <textarea class="form-textarea" id="editKQExplanation" rows="3"></textarea>
+    <label class="form-label">💡 就活ポイント</label>
+    <textarea class="form-textarea" id="editKQTip" rows="2"></textarea>
+    <div class="edit-modal-actions">
+      <button class="edit-cancel-btn" onclick="closeEditKQModal()">キャンセル</button>
+      <button class="edit-save-btn" onclick="saveEditKQ()">💾 保存する</button>
+    </div>
+  </div>
+</div>
+
+<!-- Password Modal -->
+<div class="modal-overlay" id="pwModal">
+  <div class="modal-box">
+    <div class="modal-icon">🔐</div>
+    <div class="modal-title">管理者認証</div>
+    <div class="modal-sub">問題管理画面にアクセスするには<br>パスワードが必要です</div>
+    <input class="modal-input" id="pwInput" type="password" inputmode="numeric" maxlength="6" placeholder="••••" />
+    <div class="modal-error" id="pwError"></div>
+    <div class="modal-actions">
+      <button class="modal-cancel" onclick="closeModal()">キャンセル</button>
+      <button class="modal-submit" onclick="submitPassword()">認証する</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// DATA
+// ============================================================
+const SETTINGS_PASSWORD = "0308";
+const STORAGE_KEY_BW = "bw_quiz_bw_questions";
+const STORAGE_KEY_KQ = "bw_quiz_kyujin_questions";
+
+const DEFAULT_BW_QUESTIONS = [
+  { id: 1, difficulty: "normal", question: "面接で「残業はほぼありません」と言われたが、入社後に「みなし残業40時間込みの給与です」と説明された。", answer: "black", explanation: "「みなし残業（固定残業代）」は残業代をあらかじめ給与に含める仕組み。40時間分が含まれているなら面接での説明は不十分であり、不透明な労働条件の典型例です。" },
+  { id: 2, difficulty: "normal", question: "有給休暇を申請したら「忙しいから来月以降にして」と毎月断られ、結局1年で一度も使えなかった。", answer: "black", explanation: "労働基準法では、会社が時季変更権（別日に変更させる権利）を持ちますが、使えないまま1年消滅は違法の可能性があります。年5日の有給取得は義務です。" },
+  { id: 3, difficulty: "normal", question: "新入社員研修で「失敗したら大声で謝罪させる」「できないやつは立たせる」などのスパルタ研修を実施している。", answer: "black", explanation: "精神的に追い詰める研修はパワハラに該当する可能性があります。成長を促すのと人格否定は別物。心理的安全性を無視した指導は法的リスクもあります。" },
+  { id: 4, difficulty: "normal", question: "毎月、社員全員に売上目標が課せられ、達成できなかった社員は給与の一部が引かれる制度がある。", answer: "black", explanation: "ノルマ未達を理由に給与を減額するのは、労働基準法の「賃金全額払いの原則」に違反する可能性があります。控除できるのは法令・労使協定で認められた場合のみ。" },
+  { id: 5, difficulty: "normal", question: "社員食堂が無料で利用でき、フレックスタイム制で朝9時～11時の間で出社時間を選べる。", answer: "white", explanation: "福利厚生の充実とフレックスタイム制の導入は、社員の生活の質を高める取り組みです。働き方の自由度が高い職場はホワイト企業の特徴の一つです。" },
+  { id: 6, difficulty: "normal", question: "退職届を出したところ「損害賠償を請求する」と脅され、1ヶ月後まで退職できなかった。", answer: "black", explanation: "退職の自由は法律で保障されており、退職を理由にした損害賠償請求は原則として認められません。脅しによる退職阻止は違法行為です。" },
+  { id: 7, difficulty: "normal", question: "産休・育休取得後に職場復帰した女性社員に、同等以上の役職・業務を用意している。", answer: "white", explanation: "育休復帰後の降格・減給はマタハラに当たる可能性があります。復帰後も同等以上の待遇を保障する企業は法令を遵守した優良企業と言えます。" },
+  { id: 8, difficulty: "normal", question: "「うちは家族みたいな会社だから」が口癖の上司が、休日に頻繁にLINEや電話で業務連絡をしてくる。", answer: "black", explanation: "「家族経営」「アットホーム」を理由に労働者の権利を侵害するのは典型的なブラック体質です。休日の業務連絡は原則として時間外労働に当たります。" },
+  { id: 9, difficulty: "hard", question: "月給25万円（みなし残業45時間分含む）と求人票に記載があり、45時間を超えた分は別途残業代を支払うと明示されている。", answer: "white", explanation: "みなし残業制度自体は合法です。ポイントは「超過分を別途支払うか」どうか。45時間を超えた残業代を明示的に追加支給するなら法令に沿った運用です。" },
+  { id: 10, difficulty: "hard", question: "試用期間中は正社員と同じ業務をするが、社会保険への加入は試用期間終了後からと会社に言われた。", answer: "black", explanation: "試用期間であっても、週20時間以上・31日以上の雇用見込みがある場合は初日から社会保険加入が義務です。試用期間を理由にした加入遅延は違法です。" },
+  { id: 11, difficulty: "hard", question: "会社が社員に「自己啓発のため」として業務時間外の勉強会参加を推奨しているが、参加は任意で強制でない。", answer: "white", explanation: "完全に任意で参加不参加に不利益が生じないなら合法です。ただし「事実上強制」になっていないか、参加状況が評価に影響していないか注意が必要です。" },
+  { id: 12, difficulty: "hard", question: "営業職として採用されたが、入社1ヶ月で「管理部門に異動」と一方的に告げられ、給与も変わった。", answer: "black", explanation: "職種限定で採用された場合、一方的な職種変更は契約違反になる可能性があります。給与変更を伴う場合はさらに問題で、同意なく条件を変えることは許されません。" },
+];
+
+const DEFAULT_KQ_QUESTIONS = [
+  { id: 1, difficulty: "normal", jobAd: { title: "株式会社フューチャードリーム｜営業スタッフ募集", salary: "月給18万円～（各種手当含む）", hours: "9:00～18:00（実働8時間）", holiday: "土日祝休み（年間休日120日）", welfare: "社会保険完備、交通費支給（上限2万円）、資格取得支援", appeal: "＼未経験歓迎！やる気のある方大募集！／ 完全週休2日制！アットホームな職場です。残業ほぼなし！若手が活躍中！" }, question: "この求人広告の中で最も注意すべき「怪しい表現」はどれですか？", choices: ["「未経験歓迎」という表現", "「月給18万円～（各種手当含む）」という給与表記", "「アットホームな職場」という職場環境の表現", "「資格取得支援」という福利厚生"], answer: 1, explanation: "「各種手当含む」が最大の危険信号です。月給18万円の中に、みなし残業代・皆勤手当・役職手当などが含まれている可能性があり、基本給が極めて低い場合があります。", tip: "💡 就活ポイント：給与に「各種手当含む」とある場合、「基本給はおいくらですか？」と必ず質問しましょう。" },
+  { id: 2, difficulty: "normal", jobAd: { title: "有限会社トップセールス｜営業マネージャー候補", salary: "年収400万～1000万円（完全歩合制）", hours: "フレックスタイム制（コアタイムなし）", holiday: "週休2日（シフト制）", welfare: "社会保険完備", appeal: "頑張った分だけ稼げる！実力主義の会社です。トップ営業マンは月収100万円超え！自由な働き方で収入も青天井！" }, question: "この求人票で特に確認すべきリスクはどれですか？", choices: ["フレックスタイム制の導入", "完全歩合制で固定給がない可能性", "シフト制での週休2日", "有限会社であること"], answer: 1, explanation: "「完全歩合制」は固定給がゼロの可能性があります。売上がなければ収入もゼロ、最悪の場合は最低賃金を下回ることも。雇用形態が業務委託の場合は社会保険も適用外の可能性があります。", tip: "💡 就活ポイント：「固定給はいくらですか？」「最低保証はありますか？」「雇用形態は正社員ですか？業務委託ですか？」を確認しましょう。" },
+  { id: 3, difficulty: "normal", jobAd: { title: "株式会社グローイング｜総合職（第二新卒・既卒歓迎）", salary: "月給22万円（試用期間3ヶ月は月給18万円）", hours: "8:30～17:30", holiday: "完全週休2日制（土日）祝日休み", welfare: "社会保険完備、住宅手当あり、退職金制度あり", appeal: "年間離職率5%以下！働きやすさNo.1を目指す会社。社員の声を大切にする風通しの良い職場。研修制度充実！" }, question: "この求人票の中で確認・注意すべき点として最も重要なものは？", choices: ["試用期間中の給与が低い点", "第二新卒・既卒歓迎という表現", "「年間離職率5%以下」の根拠と定義", "住宅手当の支給条件"], answer: 2, explanation: "「年間離職率5%以下」という数字は、計算方法によって大きく変わります。正社員のみか、パート含むか、直近1年か複数年平均かで全く異なります。", tip: "💡 就活ポイント：離職率は「どんな計算方法で出した数字か」「直近何年分のデータか」を確認しましょう。" },
+  { id: 4, difficulty: "hard", jobAd: { title: "ベンチャー株式会社ライズアップ｜企画営業", salary: "月給20万円以上※経験・能力考慮", hours: "裁量労働制（みなし労働9時間）", holiday: "年間休日105日", welfare: "交通費支給", appeal: "成長企業でキャリアアップ！若手に大きな仕事を任せます。経営陣との距離が近くスピード感ある環境！" }, question: "この求人で最も注意が必要な「隠れたリスク」はどれですか？", choices: ["「月給20万円以上」という曖昧な表記", "裁量労働制（みなし労働9時間）の組み合わせ", "年間休日105日という休日数", "ベンチャー企業であること"], answer: 1, explanation: "「裁量労働制＋みなし9時間」が最大のリスクです。裁量労働制では実際の労働時間に関わらず9時間働いたとみなされ、どれだけ残業しても追加の残業代が出ません。", tip: "💡 就活ポイント：裁量労働制は「みなし時間を超えた場合の扱い」「実際の平均残業時間」を確認しましょう。" },
+];
+
+
+// ============================================================
+// STATE
+// ============================================================
+let bwQuestions = [...DEFAULT_BW_QUESTIONS];
+let kqQuestions = [...DEFAULT_KQ_QUESTIONS];
+let nickname = localStorage.getItem("bw_nickname") || "";
+let currentBWPool = [];
+let bwIdx = 0, bwScore = 0;
+let currentKQPool = [];
+let kqIdx = 0, kqScore = 0;
+let addBWAnswer = "black";
+
+// ============================================================
+// HELPERS
+// ============================================================
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function getRankInfo(correct, total) {
+  const pct = correct / total;
+  if (pct <= 0.3) return { rank: "社畜予備軍", icon: "😵", color: "#ff6b6b", message: "まだまだ学びが必要です。労働者の権利をしっかり覚えよう！" };
+  if (pct <= 0.7) return { rank: "一般社員", icon: "😊", color: "#ffd700", message: "基本的な知識はあります。グレーゾーンの見極めを磨こう！" };
+  return { rank: "ブラック企業ハンター", icon: "🔥", color: "#00e676", message: "素晴らしい！労働者の権利に精通したエキスパートです！" };
+}
+function saveStorage() {
+  // Firestoreが使えない場合のフォールバックとしてlocalStorageにも保存
+  localStorage.setItem(STORAGE_KEY_BW, JSON.stringify(bwQuestions));
+  localStorage.setItem(STORAGE_KEY_KQ, JSON.stringify(kqQuestions));
+}
+
+// ============================================================
+// SCREEN NAVIGATION
+// ============================================================
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-' + id).classList.add('active');
+  if (id === 'home') {
+    subscribeHomeRanking();
+    // GA event
+    if (typeof gtag === 'function') gtag('event', 'page_view', { page_title: 'ホーム' });
+  } else {
+    if (typeof window.unsubscribeRanking === 'function') window.unsubscribeRanking();
+  }
+}
+
+// ============================================================
+// NICKNAME (legacy stub – replaced by modal)
+// ============================================================
+
+// ============================================================
+// RANKING
+// ============================================================
+function subscribeHomeRanking() {
+  if (typeof window.subscribeRanking !== 'function') return;
+  window.subscribeRanking(renderRanking);
+}
+function renderRanking(data) {
+  const el = document.getElementById('rankingList');
+  const medals = ['🥇','🥈','🥉'];
+  if (data.length === 0) {
+    el.innerHTML = '<div class="rank-empty-home">まだランキングデータがありません<br>ゲームをプレイしてランクイン！</div>';
+    return;
+  }
+  el.innerHTML = data.map((r, i) => `
+    <div class="ranking-row">
+      ${i < 3 ? `<span class="rank-medal">${medals[i]}</span>` : `<span class="rank-num-other">${i+1}</span>`}
+      <span class="rank-name">${escHtml(r.name || 'ゲスト')}</span>
+      <span class="rank-pts">${r.score}<span>pt</span></span>
+    </div>
+  `).join('');
+}
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ============================================================
+// BW QUIZ
+// ============================================================
+function goToBWDiff() { showScreen('bw-diff'); }
+function startBWQuiz(difficulty) {
+  const filtered = difficulty === 'all' ? bwQuestions : bwQuestions.filter(q => q.difficulty === difficulty);
+  currentBWPool = shuffle(filtered).slice(0, Math.min(10, filtered.length));
+  bwIdx = 0; bwScore = 0;
+  showScreen('bw-quiz');
+  renderBWQuestion();
+  const badge = document.getElementById('bwDiffBadge');
+  badge.textContent = difficulty === 'hard' ? 'むずかしい' : difficulty === 'all' ? 'MIX' : 'ふつう';
+  badge.className = 'header-badge ' + (difficulty === 'hard' ? 'badge-hard' : 'badge-normal');
+  if (typeof gtag === 'function') gtag('event', 'quiz_start', { quiz_type: 'bw', difficulty });
+}
+function renderBWQuestion() {
+  const q = currentBWPool[bwIdx];
+  const pct = (bwIdx / currentBWPool.length) * 100;
+  document.getElementById('bwProgressNum').textContent = `${bwIdx+1} / ${currentBWPool.length}`;
+  document.getElementById('bwProgressScore').textContent = `⭐ ${bwScore}点`;
+  document.getElementById('bwProgressFill').style.width = pct + '%';
+  const chip = document.getElementById('bwDiffChip');
+  chip.textContent = q.difficulty === 'hard' ? '🔥 むずかしい' : '🌙 ふつう';
+  chip.className = 'diff-chip ' + (q.difficulty === 'hard' ? 'badge-hard' : 'badge-normal');
+  document.getElementById('bwQuestion').textContent = 'Q. ' + q.question;
+  document.getElementById('bwExplanation').style.display = 'none';
+  document.getElementById('bwNextBtn').style.display = 'none';
+  const btnB = document.getElementById('btnBlack');
+  const btnW = document.getElementById('btnWhite');
+  btnB.disabled = false; btnW.disabled = false;
+  btnB.className = 'bw-choice-btn choice-black';
+  btnW.className = 'bw-choice-btn choice-white';
+}
+function answerBW(choice) {
+  const q = currentBWPool[bwIdx];
+  const correct = choice === q.answer;
+  if (correct) bwScore++;
+  const btnB = document.getElementById('btnBlack');
+  const btnW = document.getElementById('btnWhite');
+  btnB.disabled = true; btnW.disabled = true;
+  if (choice === 'black') btnB.classList.add(correct ? 'choice-correct' : 'choice-wrong');
+  else btnW.classList.add(correct ? 'choice-correct' : 'choice-wrong');
+  if (q.answer === 'black') btnB.classList.add('choice-correct');
+  else btnW.classList.add('choice-correct');
+  const badge = document.getElementById('bwAnswerBadge');
+  badge.textContent = correct ? '✓ 正解！' : '✗ 不正解';
+  badge.className = 'answer-badge ' + (correct ? 'badge-correct' : 'badge-wrong');
+  document.getElementById('bwCorrectAnswer').textContent = `正解: ${q.answer === 'black' ? '🖤 ブラック' : '🤍 ホワイト'}`;
+  document.getElementById('bwExplanationText').textContent = q.explanation;
+  document.getElementById('bwExplanation').style.display = 'block';
+  const nextBtn = document.getElementById('bwNextBtn');
+  nextBtn.textContent = bwIdx + 1 >= currentBWPool.length ? '結果を見る 🎉' : '次の問題へ →';
+  nextBtn.style.display = 'block';
+  if (typeof gtag === 'function') gtag('event', 'answer', { quiz_type:'bw', correct, question_id: q.id });
+}
+function nextBWQuestion() {
+  if (bwIdx + 1 >= currentBWPool.length) {
+    showBWResult();
+  } else {
+    bwIdx++;
+    renderBWQuestion();
+  }
+}
+async function showBWResult() {
+  const total = currentBWPool.length;
+  const info = getRankInfo(bwScore, total);
+  document.getElementById('bwResultIcon').textContent = info.icon;
+  document.getElementById('bwResultRank').textContent = info.rank;
+  document.getElementById('bwResultScore').textContent = bwScore;
+  document.getElementById('bwResultTotal').textContent = total;
+  document.getElementById('bwResultMessage').textContent = info.message;
+  document.getElementById('bwResultPlayer').textContent = nickname || 'ゲスト';
+  document.getElementById('bwResultCorrect').textContent = bwScore + '問';
+  document.getElementById('bwResultWrong').textContent = (total - bwScore) + '問';
+  document.getElementById('bwResultPct').textContent = Math.round(bwScore / total * 100) + '%';
+  document.getElementById('bwResultTitle').textContent = info.rank;
+  document.getElementById('bwSaveMsg').style.display = 'none';
+  showScreen('bw-result');
+  if (typeof gtag === 'function') gtag('event', 'quiz_complete', { quiz_type:'bw', score: bwScore, total });
+  if (typeof window.saveScore === 'function') {
+    const pts = Math.round(bwScore / total * 100);
+    const ok = await window.saveScore(nickname || 'ゲスト', pts);
+    if (ok) document.getElementById('bwSaveMsg').style.display = 'block';
+  }
+}
+
+// ============================================================
+// KYUJIN QUIZ
+// ============================================================
+function goToKyujin() { showScreen('kq-diff'); }
+function startKyujinQuiz(difficulty) {
+  const filtered = difficulty === 'all' ? kqQuestions : kqQuestions.filter(q => q.difficulty === difficulty);
+  currentKQPool = shuffle(filtered).slice(0, Math.min(10, filtered.length));
+  kqIdx = 0; kqScore = 0;
+  showScreen('kyujin');
+  renderKQQuestion();
+  const badge = document.getElementById('kqProgress');
+  badge.className = 'header-badge ' + (difficulty === 'hard' ? 'badge-hard' : 'badge-normal');
+  if (typeof gtag === 'function') gtag('event', 'quiz_start', { quiz_type: 'kyujin', difficulty });
+}
+function renderKQQuestion() {
+  const q = currentKQPool[kqIdx];
+  document.getElementById('kqProgress').textContent = `${kqIdx+1}/${currentKQPool.length}`;
+  document.getElementById('kqAdTitle').textContent = q.jobAd.title;
+  document.getElementById('kqAdRows').innerHTML = [
+    ['給与', q.jobAd.salary], ['時間', q.jobAd.hours],
+    ['休日', q.jobAd.holiday], ['福利厚生', q.jobAd.welfare]
+  ].map(([k,v]) => `<div class="job-ad-row"><span class="job-ad-key">${k}:</span><span class="job-ad-val">${escHtml(v)}</span></div>`).join('');
+  document.getElementById('kqAdAppeal').textContent = q.jobAd.appeal;
+  document.getElementById('kqQuestion').textContent = '❓ ' + q.question;
+  document.getElementById('kqChoices').innerHTML = q.choices.map((c, i) =>
+    `<button class="kq-choice" id="kqBtn${i}" onclick="answerKQ(${i})">${String.fromCharCode(65+i)}. ${escHtml(c)}</button>`
+  ).join('');
+  document.getElementById('kqExplanation').style.display = 'none';
+}
+function answerKQ(i) {
+  const q = currentKQPool[kqIdx];
+  const correct = i === q.answer;
+  if (correct) kqScore++;
+  for (let j = 0; j < q.choices.length; j++) {
+    const btn = document.getElementById('kqBtn' + j);
+    btn.disabled = true;
+    if (j === q.answer) btn.classList.add('kq-correct');
+    else if (j === i) btn.classList.add('kq-wrong');
+  }
+  const badge = document.getElementById('kqAnswerBadge');
+  badge.textContent = correct ? '✓ 正解！さすがです！' : '✗ 不正解...要チェック！';
+  badge.className = 'answer-badge ' + (correct ? 'badge-correct' : 'badge-wrong');
+  document.getElementById('kqExpText').textContent = q.explanation;
+  document.getElementById('kqTip').textContent = q.tip;
+  const nextBtn = document.querySelector('#kqExplanation .next-btn');
+  nextBtn.textContent = kqIdx + 1 >= currentKQPool.length ? '結果を見る 🎉' : '次の問題へ →';
+  document.getElementById('kqExplanation').style.display = 'block';
+  if (typeof gtag === 'function') gtag('event', 'answer', { quiz_type:'kyujin', correct, question_id: q.id });
+}
+function nextKQQuestion() {
+  if (kqIdx + 1 >= currentKQPool.length) {
+    showKQResult();
+  } else {
+    kqIdx++;
+    renderKQQuestion();
+  }
+}
+function showKQResult() {
+  const total = currentKQPool.length;
+  const pct = Math.round(kqScore / total * 100);
+  document.getElementById('kqResultIcon').textContent = pct >= 80 ? '🕵️' : pct >= 50 ? '😊' : '😵';
+  document.getElementById('kqResultRank').textContent = pct >= 80 ? '求人詐欺ハンター' : pct >= 50 ? '就活中級者' : '要注意！カモリスト入り';
+  document.getElementById('kqResultScore').textContent = kqScore;
+  document.getElementById('kqResultTotal').textContent = total;
+  document.getElementById('kqResultMessage').textContent = pct >= 80 ? '完璧！求人詐欺に騙されない目を持っています！' : pct >= 50 ? 'まずまず。もう少し注意深く求人票を読む練習をしよう！' : '危険！この調子では騙されてしまうかも。知識を磨こう！';
+  document.getElementById('kqResultPlayer').textContent = nickname || 'ゲスト';
+  document.getElementById('kqResultCorrect').textContent = kqScore + '問';
+  document.getElementById('kqResultPct').textContent = pct + '%';
+  showScreen('kq-result');
+  if (typeof gtag === 'function') gtag('event', 'quiz_complete', { quiz_type:'kyujin', score: kqScore, total });
+}
+
+// ============================================================
+// SETTINGS
+// ============================================================
+function openSettingsModal() {
+  document.getElementById('pwModal').classList.add('active');
+  document.getElementById('pwInput').value = '';
+  document.getElementById('pwError').textContent = '';
+  setTimeout(() => document.getElementById('pwInput').focus(), 100);
+}
+function closeModal() { document.getElementById('pwModal').classList.remove('active'); }
+function submitPassword() {
+  const val = document.getElementById('pwInput').value;
+  if (val === SETTINGS_PASSWORD) {
+    closeModal();
+    showScreen('settings');
+    renderSettingsLists();
+  } else {
+    document.getElementById('pwError').textContent = 'パスワードが違います';
+    document.getElementById('pwInput').value = '';
+  }
+}
+document.getElementById('pwInput').addEventListener('keydown', e => { if (e.key === 'Enter') submitPassword(); });
+
+function switchTab(tab) {
+  document.getElementById('settingsBW').style.display = tab === 'bw' ? 'block' : 'none';
+  document.getElementById('settingsKQ').style.display = tab === 'kyujin' ? 'block' : 'none';
+  document.getElementById('tabBtnBW').classList.toggle('active', tab === 'bw');
+  document.getElementById('tabBtnKQ').classList.toggle('active', tab === 'kyujin');
+}
+function renderSettingsLists() {
+  document.getElementById('bwQList').innerHTML = bwQuestions.map(q => `
+    <div class="q-item">
+      <div class="q-item-text">
+        <span class="q-item-badge ${q.difficulty==='hard'?'badge-hard':'badge-normal'}">${q.difficulty==='hard'?'むず':'ふつう'}</span>
+        <span class="q-item-badge ${q.answer==='black'?'tag-bw':''}">${q.answer==='black'?'🖤ブラック':'🤍ホワイト'}</span><br>
+        ${escHtml(q.question.substring(0,60))}...
+      </div>
+      <div class="q-item-actions">
+        <button class="q-edit-btn" onclick="openEditBWModal(${q.id})">編集</button>
+        <button class="q-del-btn" onclick="delBWQuestion(${q.id})">削除</button>
+      </div>
+    </div>
+  `).join('');
+  document.getElementById('kqQList').innerHTML = kqQuestions.map(q => `
+    <div class="q-item">
+      <div class="q-item-text">${escHtml(q.jobAd.title.substring(0,50))}...</div>
+      <div class="q-item-actions">
+        <button class="q-edit-btn" onclick="openEditKQModal(${q.id})">編集</button>
+        <button class="q-del-btn" onclick="delKQQuestion(${q.id})">削除</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ============================================================
+// EDIT FUNCTIONS
+// ============================================================
+let editBWAnswer = 'black';
+
+function openEditBWModal(id) {
+  const q = bwQuestions.find(q => q.id === id);
+  if (!q) return;
+  document.getElementById('editBWId').value = id;
+  document.getElementById('editBWQuestion').value = q.question;
+  document.getElementById('editBWExplanation').value = q.explanation;
+  document.getElementById('editBWDifficulty').value = q.difficulty;
+  editBWAnswer = q.answer;
+  document.getElementById('editRadioBlack').className = 'form-radio' + (q.answer==='black'?' active-black':'');
+  document.getElementById('editRadioWhite').className = 'form-radio' + (q.answer==='white'?' active-white':'');
+  document.getElementById('editBWModal').classList.add('active');
+}
+function closeEditBWModal() {
+  document.getElementById('editBWModal').classList.remove('active');
+}
+function editSelectAnswer(val) {
+  editBWAnswer = val;
+  document.getElementById('editRadioBlack').className = 'form-radio' + (val==='black'?' active-black':'');
+  document.getElementById('editRadioWhite').className = 'form-radio' + (val==='white'?' active-white':'');
+}
+function saveEditBW() {
+  const id = Number(document.getElementById('editBWId').value);
+  const q_text = document.getElementById('editBWQuestion').value.trim();
+  const ex = document.getElementById('editBWExplanation').value.trim();
+  const diff = document.getElementById('editBWDifficulty').value;
+  if (!q_text || !ex) return alert('問題文と解説を入力してください');
+  const idx = bwQuestions.findIndex(q => q.id === id);
+  if (idx === -1) return;
+  bwQuestions[idx] = { ...bwQuestions[idx], question: q_text, answer: editBWAnswer, difficulty: diff, explanation: ex };
+  saveStorage();
+  if (typeof window.saveQuestionToFirestore === 'function') window.saveQuestionToFirestore('bw', bwQuestions[idx]);
+  renderSettingsLists();
+  closeEditBWModal();
+}
+
+function openEditKQModal(id) {
+  const q = kqQuestions.find(q => q.id === id);
+  if (!q) return;
+  document.getElementById('editKQId').value = id;
+  document.getElementById('editKQTitle').value = q.jobAd.title;
+  document.getElementById('editKQSalary').value = q.jobAd.salary || '';
+  document.getElementById('editKQHours').value = q.jobAd.hours || '';
+  document.getElementById('editKQHoliday').value = q.jobAd.holiday || '';
+  document.getElementById('editKQWelfare').value = q.jobAd.welfare || '';
+  document.getElementById('editKQAppeal').value = q.jobAd.appeal || '';
+  document.getElementById('editKQQuestion').value = q.question;
+  [0,1,2,3].forEach(i => { document.getElementById('editKQC'+i).value = q.choices[i] || ''; });
+  document.getElementById('editKQAnswer').value = q.answer;
+  document.getElementById('editKQExplanation').value = q.explanation || '';
+  document.getElementById('editKQTip').value = q.tip || '';
+  document.getElementById('editKQModal').classList.add('active');
+}
+function closeEditKQModal() {
+  document.getElementById('editKQModal').classList.remove('active');
+}
+function saveEditKQ() {
+  const id = Number(document.getElementById('editKQId').value);
+  const title = document.getElementById('editKQTitle').value.trim();
+  const question = document.getElementById('editKQQuestion').value.trim();
+  if (!title || !question) return alert('タイトルと設問を入力してください');
+  const idx = kqQuestions.findIndex(q => q.id === id);
+  if (idx === -1) return;
+  kqQuestions[idx] = {
+    ...kqQuestions[idx],
+    jobAd: {
+      title,
+      salary: document.getElementById('editKQSalary').value,
+      hours: document.getElementById('editKQHours').value,
+      holiday: document.getElementById('editKQHoliday').value,
+      welfare: document.getElementById('editKQWelfare').value,
+      appeal: document.getElementById('editKQAppeal').value,
+    },
+    question,
+    choices: [0,1,2,3].map(i => document.getElementById('editKQC'+i).value.trim()),
+    answer: Number(document.getElementById('editKQAnswer').value),
+    explanation: document.getElementById('editKQExplanation').value,
+    tip: document.getElementById('editKQTip').value,
+  };
+  saveStorage();
+  if (typeof window.saveQuestionToFirestore === 'function') window.saveQuestionToFirestore('kq', kqQuestions[idx]);
+  renderSettingsLists();
+  closeEditKQModal();
+}
+function selectAnswer(val) {
+  addBWAnswer = val;
+  document.getElementById('radioBlack').className = 'form-radio' + (val==='black'?' active-black':'');
+  document.getElementById('radioWhite').className = 'form-radio' + (val==='white'?' active-white':'');
+}
+function addBWQuestion() {
+  const q = document.getElementById('addBWQuestion').value.trim();
+  const ex = document.getElementById('addBWExplanation').value.trim();
+  const diff = document.getElementById('addBWDifficulty').value;
+  if (!q || !ex) return alert('問題文と解説を入力してください');
+  const newQ = { id: Date.now(), difficulty: diff, question: q, answer: addBWAnswer, explanation: ex };
+  bwQuestions.push(newQ);
+  saveStorage();
+  if (typeof window.saveQuestionToFirestore === 'function') window.saveQuestionToFirestore('bw', newQ);
+  renderSettingsLists();
+  document.getElementById('addBWQuestion').value = '';
+  document.getElementById('addBWExplanation').value = '';
+}
+function delBWQuestion(id) {
+  bwQuestions = bwQuestions.filter(q => q.id !== id);
+  saveStorage();
+  if (typeof window.deleteQuestionFromFirestore === 'function') window.deleteQuestionFromFirestore('bw', id);
+  renderSettingsLists();
+}
+function addKQQuestion() {
+  const title = document.getElementById('kqTitle').value.trim();
+  const question = document.getElementById('kqQuestionInput').value.trim();
+  if (!title || !question) return alert('タイトルと設問を入力してください');
+  const choices = [0,1,2,3].map(i => document.getElementById('kqC'+i).value.trim());
+  const newQ = {
+    id: Date.now(),
+    difficulty: document.getElementById('kqDifficulty').value,
+    jobAd: {
+      title,
+      salary: document.getElementById('kqSalary').value,
+      hours: document.getElementById('kqHours').value,
+      holiday: document.getElementById('kqHoliday').value,
+      welfare: document.getElementById('kqWelfare').value,
+      appeal: document.getElementById('kqAppeal').value,
+    },
+    question, choices,
+    answer: Number(document.getElementById('kqAnswer').value),
+    explanation: document.getElementById('kqExplanationInput').value,
+    tip: document.getElementById('kqTipInput').value,
+  };
+  kqQuestions.push(newQ);
+  saveStorage();
+  if (typeof window.saveQuestionToFirestore === 'function') window.saveQuestionToFirestore('kq', newQ);
+  renderSettingsLists();
+}
+function delKQQuestion(id) {
+  kqQuestions = kqQuestions.filter(q => q.id !== id);
+  saveStorage();
+  if (typeof window.deleteQuestionFromFirestore === 'function') window.deleteQuestionFromFirestore('kq', id);
+  renderSettingsLists();
+}
+function resetAll() {
+  if (!confirm('全データをリセットしますか？')) return;
+  bwQuestions = [...DEFAULT_BW_QUESTIONS];
+  kqQuestions = [...DEFAULT_KQ_QUESTIONS];
+  saveStorage();
+  if (typeof window.saveAllQuestionsToFirestore === 'function') window.saveAllQuestionsToFirestore(bwQuestions, kqQuestions);
+  renderSettingsLists();
+}
+
+// ============================================================
+// NICKNAME MODAL
+// ============================================================
+function openNickModal() {
+  document.getElementById('nickModal').classList.add('active');
+  const input = document.getElementById('nickModalInput');
+  input.value = nickname;
+  setTimeout(() => input.focus(), 100);
+}
+function closeNickModal() {
+  document.getElementById('nickModal').classList.remove('active');
+}
+function submitNickModal() {
+  const val = document.getElementById('nickModalInput').value.trim();
+  if (!val) return;
+  nickname = val;
+  localStorage.setItem('bw_nickname', val);
+  updateNickChip();
+  closeNickModal();
+  if (typeof gtag === 'function') gtag('event', 'set_nickname');
+}
+
+function updateNickChip() {
+  const chipText = document.getElementById('nickChipText');
+  const chipEdit = document.getElementById('nickChipEdit');
+  if (nickname) {
+    chipText.textContent = nickname;
+    chipEdit.textContent = '✎';
+  } else {
+    chipText.textContent = 'ニックネームを設定';
+    chipEdit.textContent = '';
+  }
+}
+document.getElementById('nickModalInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitNickModal();
+});
+
+// ============================================================
+// INIT
+// ============================================================
+function initNickname() {
+  updateNickChip();
+  if (!nickname) {
+    setTimeout(() => openNickModal(), 400);
+  }
+}
+
+async function initQuestions() {
+  if (typeof window.loadQuestionsFromFirestore === 'function') {
+    const data = await window.loadQuestionsFromFirestore();
+    if (data) {
+      // デフォルト問題を先に、Firestoreで追加した問題を後ろにマージ
+      const mergeQuestions = (fsData, defaults) => {
+        const defaultMap = new Map(defaults.map(q => [q.id, q]));
+        const fsDefault = fsData
+          .filter(q => defaultMap.has(q.id))
+          .map(q => ({ ...q, difficulty: defaultMap.get(q.id).difficulty })); // difficultyをデフォルトで上書き
+        const fsAdded = fsData.filter(q => !defaultMap.has(q.id));
+        const fsDefaultIds = new Set(fsDefault.map(q => q.id));
+        const missing = defaults.filter(q => !fsDefaultIds.has(q.id));
+        return [...fsDefault, ...missing, ...fsAdded];
+      };
+      bwQuestions = mergeQuestions(data.bw || [], DEFAULT_BW_QUESTIONS);
+      kqQuestions = mergeQuestions(data.kq || [], DEFAULT_KQ_QUESTIONS);
+      // Firestoreに不足分を書き込む
+      if (typeof window.saveAllQuestionsToFirestore === 'function') {
+        window.saveAllQuestionsToFirestore(bwQuestions, kqQuestions);
+      }
+      return;
+    }
+  }
+  // Firestoreに未接続 → localStorageまたはデフォルト
+  const localBW = JSON.parse(localStorage.getItem(STORAGE_KEY_BW) || 'null');
+  const localKQ = JSON.parse(localStorage.getItem(STORAGE_KEY_KQ) || 'null');
+  bwQuestions = localBW || [...DEFAULT_BW_QUESTIONS];
+  kqQuestions = localKQ || [...DEFAULT_KQ_QUESTIONS];
+  if (typeof window.saveAllQuestionsToFirestore === 'function') {
+    window.saveAllQuestionsToFirestore(bwQuestions, kqQuestions);
+  }
+}
+
+initNickname();
+
+// Firebaseのmodule読み込みを待ってから問題・ランキングを初期化
+function tryInit(retries) {
+  if (typeof window.loadQuestionsFromFirestore === 'function') {
+    initQuestions();
+    subscribeHomeRanking();
+  } else if (retries > 0) {
+    setTimeout(() => tryInit(retries - 1), 300);
+  } else {
+    // タイムアウト：localStorageにフォールバック
+    const localBW = JSON.parse(localStorage.getItem(STORAGE_KEY_BW) || 'null');
+    const localKQ = JSON.parse(localStorage.getItem(STORAGE_KEY_KQ) || 'null');
+    bwQuestions = localBW || [...DEFAULT_BW_QUESTIONS];
+    kqQuestions = localKQ || [...DEFAULT_KQ_QUESTIONS];
+  }
+}
+tryInit(15);
+</script>
+</body>
+</html>
