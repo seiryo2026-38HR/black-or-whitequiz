@@ -1,0 +1,1564 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ブラック or ホワイト？企業体験クイズ</title>
+
+<!-- Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-XXXXXXXXXX'); // ← ご自身のGA4 測定IDに差し替えてください
+</script>
+
+<!-- Google Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;700;900&family=Oswald:wght@400;700&display=swap" rel="stylesheet" />
+
+<!-- Firebase -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {
+  getFirestore, doc, collection, getDoc, setDoc, updateDoc, deleteDoc, getDocs,
+  onSnapshot, query, orderBy, limit, increment, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+// ============================================================
+// ⚠️ ここを自分のFirebaseプロジェクトの設定に差し替えてください
+// ============================================================
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID",
+};
+
+let db;
+try {
+  const app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+} catch(e) { console.warn("Firebase init failed:", e); }
+
+// ========== USER ID ==========
+function getUserId() {
+  let id = localStorage.getItem("bw_user_id");
+  if (!id) {
+    id = "user_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    localStorage.setItem("bw_user_id", id);
+  }
+  return id;
+}
+
+// ========== RANKING ==========
+window._rankingUnsub = null;
+window.subscribeRanking = function(cb) {
+  if (!db) { cb([]); return; }
+  if (window._rankingUnsub) { window._rankingUnsub(); window._rankingUnsub = null; }
+  const q = query(collection(db, "rankings"), orderBy("score", "desc"), limit(10));
+  window._rankingUnsub = onSnapshot(q,
+    snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+    err  => { console.error(err); cb([]); }
+  );
+};
+window.unsubscribeRanking = function() {
+  if (window._rankingUnsub) { window._rankingUnsub(); window._rankingUnsub = null; }
+};
+
+// ========== QUESTIONS (Firestore) ==========
+window.loadQuestionsFromFirestore = async function() {
+  if (!db) return false;
+  try {
+    const bwSnap = await getDocs(query(collection(db, "questions_bw"), orderBy("id")));
+    const kqSnap = await getDocs(query(collection(db, "questions_kq"), orderBy("id")));
+    if (!bwSnap.empty) {
+      window._fsHasQuestions = true;
+      return {
+        bw: bwSnap.docs.map(d => d.data()),
+        kq: kqSnap.docs.map(d => d.data()),
+      };
+    }
+    return null;
+  } catch(e) { console.warn("loadQuestions error:", e); return null; }
+};
+
+window.saveQuestionToFirestore = async function(type, q) {
+  if (!db) return;
+  try {
+    await setDoc(doc(db, "questions_" + type, String(q.id)), q);
+  } catch(e) { console.error("saveQuestion error:", e); }
+};
+
+window.deleteQuestionFromFirestore = async function(type, id) {
+  if (!db) return;
+  try {
+    await deleteDoc(doc(db, "questions_" + type, String(id)));
+  } catch(e) { console.error("deleteQuestion error:", e); }
+};
+
+window.saveAllQuestionsToFirestore = async function(bwList, kqList) {
+  if (!db) return;
+  try {
+    await Promise.all([
+      ...bwList.map(q => setDoc(doc(db, "questions_bw", String(q.id)), q)),
+      ...kqList.map(q => setDoc(doc(db, "questions_kq", String(q.id)), q)),
+    ]);
+  } catch(e) { console.error("saveAllQuestions error:", e); }
+};
+
+window.saveScore = async function(nickname, pts) {
+  if (!db) return;
+  const userId = getUserId();
+  const ref = doc(db, "rankings", userId);
+  try {
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      await updateDoc(ref, { score: increment(pts), name: nickname || "ゲスト", updatedAt: serverTimestamp() });
+    } else {
+      await setDoc(ref, { name: nickname || "ゲスト", score: pts, updatedAt: serverTimestamp() });
+    }
+    return true;
+  } catch(err) { console.error("Score save error:", err); return false; }
+};
+</script>
+
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --black: #0a0a0f;
+  --dark: #12121a;
+  --card: #1a1a28;
+  --card2: #1e1e30;
+  --border: #2a2a40;
+  --border2: #35355a;
+  --white-col: #f0f4ff;
+  --accent-red: #ff3355;
+  --accent-blue: #00c8ff;
+  --accent-gold: #ffd700;
+  --accent-green: #00e676;
+  --accent-purple: #b060ff;
+  --text: #e8eaf6;
+  --text-dim: #8892b0;
+  --font: 'Zen Kaku Gothic New', sans-serif;
+  --font-display: 'Oswald', sans-serif;
+}
+body {
+  font-family: var(--font);
+  background: var(--black);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+.app {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  position: relative;
+}
+.app::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 10%, rgba(0,200,255,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 40% at 80% 80%, rgba(255,51,85,0.06) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+.screen { position: relative; z-index: 1; display: none; }
+.screen.active { display: block; }
+
+/* ─── HOME ─── */
+.home { padding: 0 20px 40px; }
+.home-header { text-align: center; padding: 28px 0 24px; }
+.home-badge {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 11px; letter-spacing: 3px;
+  color: var(--accent-gold);
+  border: 1px solid var(--accent-gold);
+  padding: 4px 12px; margin-bottom: 14px;
+}
+.home-title {
+  font-family: var(--font-display); font-size: 26px; line-height: 1.2; letter-spacing: 1px;
+  background: linear-gradient(135deg, var(--accent-red), var(--accent-blue));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  margin-bottom: 6px;
+}
+.home-subtitle { font-size: 12px; color: var(--text-dim); letter-spacing: 0.5px; }
+
+/* ─── NICKNAME (home chip) ─── */
+.nick-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(0,200,255,0.1); border: 1px solid rgba(0,200,255,0.25);
+  border-radius: 20px; padding: 5px 14px; margin-bottom: 20px;
+  cursor: pointer; transition: background 0.2s;
+}
+.nick-chip:hover { background: rgba(0,200,255,0.18); }
+.nick-chip-icon { font-size: 13px; }
+.nick-chip-text { font-size: 12px; color: var(--accent-blue); font-weight: 700; }
+.nick-chip-edit { font-size: 10px; color: var(--text-dim); margin-left: 2px; }
+
+/* ─── NICKNAME MODAL ─── */
+.nick-modal-input {
+  width: 100%; background: rgba(255,255,255,0.07); border: 1px solid var(--border2);
+  border-radius: 10px; color: var(--text); font-family: var(--font); font-size: 18px;
+  padding: 14px; outline: none; text-align: center;
+  transition: border-color 0.2s; margin-bottom: 16px;
+}
+.nick-modal-input:focus { border-color: var(--accent-blue); }
+.nick-modal-submit {
+  width: 100%; background: linear-gradient(135deg, var(--accent-blue), #0088cc);
+  border: none; border-radius: 10px; color: #fff; font-family: var(--font);
+  font-size: 15px; font-weight: 700; padding: 14px; cursor: pointer; margin-bottom: 10px;
+}
+.nick-modal-skip {
+  width: 100%; background: none; border: none;
+  color: var(--text-dim); font-family: var(--font); font-size: 13px;
+  padding: 8px; cursor: pointer;
+}
+
+/* ─── GAME CARDS ─── */
+.game-cards { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
+.game-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+  padding: 20px; cursor: pointer; transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+  position: relative; overflow: hidden;
+}
+.game-card:active { transform: scale(0.97); }
+.game-card:hover { border-color: rgba(255,255,255,0.2); box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+.game-card-icon { font-size: 34px; margin-bottom: 10px; }
+.game-card-tag {
+  display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: 1px;
+  padding: 2px 8px; border-radius: 4px; margin-bottom: 8px;
+}
+.tag-bw { background: rgba(255,51,85,0.2); color: var(--accent-red); border: 1px solid rgba(255,51,85,0.3); }
+.tag-kj { background: rgba(255,215,0,0.2); color: var(--accent-gold); border: 1px solid rgba(255,215,0,0.3); }
+.game-card-title { font-size: 17px; font-weight: 900; margin-bottom: 6px; }
+.game-card-desc { font-size: 12px; color: var(--text-dim); line-height: 1.6; }
+.game-card-arrow { position: absolute; right: 20px; top: 50%; transform: translateY(-50%); color: var(--text-dim); font-size: 24px; }
+
+/* ─── HOME RANKING ─── */
+.home-ranking {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 14px; padding: 16px; margin-bottom: 18px;
+}
+.home-ranking-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.home-ranking-title {
+  font-family: var(--font-display); font-size: 15px; color: var(--accent-gold); letter-spacing: 1px;
+  display: flex; align-items: center; gap: 6px;
+}
+.home-ranking-live { font-size: 10px; color: var(--accent-green); display: flex; align-items: center; gap: 4px; }
+.ranking-row {
+  display: flex; align-items: center; gap: 10px; padding: 7px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.ranking-row:last-child { border-bottom: none; }
+.rank-medal { font-size: 16px; min-width: 22px; text-align: center; }
+.rank-name { flex: 1; font-size: 13px; font-weight: 700; }
+.rank-pts { font-size: 14px; font-weight: 900; color: var(--accent-gold); }
+.rank-pts span { font-size: 10px; color: var(--text-dim); font-weight: 400; margin-left: 2px; }
+.rank-num-other { font-family: var(--font-display); font-size: 13px; color: var(--text-dim); min-width: 22px; text-align: center; }
+.rank-loading { text-align: center; padding: 12px; color: var(--text-dim); font-size: 13px; }
+.rank-empty-home { text-align: center; padding: 16px; color: var(--text-dim); font-size: 12px; line-height: 1.8; }
+
+/* ─── BOTTOM NAV ─── */
+.bottom-nav { display: flex; gap: 10px; margin-top: 4px; }
+.nav-btn {
+  flex: 1; background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  border-radius: 10px; color: var(--text-dim); font-family: var(--font);
+  font-size: 12px; padding: 10px 8px; cursor: pointer; transition: all 0.2s; text-align: center;
+}
+.nav-btn:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+
+/* ─── HEADER BAR ─── */
+.header-bar {
+  display: flex; align-items: center; padding: 16px 20px;
+  position: relative; border-bottom: 1px solid var(--border);
+}
+.back-btn { background: none; border: none; color: var(--text-dim); font-size: 22px; cursor: pointer; margin-right: 10px; padding: 0; line-height: 1; }
+.back-btn:hover { color: var(--text); }
+.header-title { font-size: 14px; font-weight: 700; flex: 1; }
+.header-badge { font-size: 10px; padding: 3px 8px; border-radius: 20px; font-weight: 700; }
+.badge-normal { background: rgba(0,200,255,0.2); color: var(--accent-blue); }
+.badge-hard { background: rgba(255,51,85,0.2); color: var(--accent-red); }
+
+/* ─── DIFFICULTY ─── */
+.diff-screen { padding: 20px; }
+.diff-title { font-size: 20px; font-weight: 900; text-align: center; margin: 20px 0 8px; }
+.diff-sub { font-size: 13px; color: var(--text-dim); text-align: center; margin-bottom: 32px; }
+.diff-cards { display: flex; flex-direction: column; gap: 14px; }
+.diff-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+  padding: 24px; cursor: pointer; transition: all 0.2s; text-align: center;
+}
+.diff-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+.diff-card-icon { font-size: 40px; margin-bottom: 10px; }
+.diff-card-name { font-size: 20px; font-weight: 900; margin-bottom: 6px; }
+.diff-card-desc { font-size: 12px; color: var(--text-dim); line-height: 1.6; }
+.diff-normal { border-color: rgba(0,200,255,0.3); }
+.diff-normal:hover { border-color: var(--accent-blue); }
+.diff-hard { border-color: rgba(255,51,85,0.3); }
+.diff-hard:hover { border-color: var(--accent-red); }
+.diff-mix { border-color: rgba(255,215,0,0.3); }
+.diff-mix:hover { border-color: var(--accent-gold); }
+
+/* ─── QUIZ ─── */
+.quiz-screen { padding: 0 0 40px; }
+.quiz-progress { padding: 12px 20px 0; }
+.progress-info { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.progress-num { font-size: 13px; color: var(--text-dim); }
+.progress-score { font-size: 13px; font-weight: 700; color: var(--accent-gold); }
+.progress-bar { height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; }
+.progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent-blue), var(--accent-red)); border-radius: 2px; transition: width 0.3s; }
+.quiz-body { padding: 20px; }
+.diff-chip {
+  display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: 1px;
+  padding: 3px 10px; border-radius: 20px; margin-bottom: 14px;
+}
+.quiz-question-text { font-size: 17px; font-weight: 700; line-height: 1.7; margin-bottom: 28px; }
+.bw-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+.bw-choice-btn {
+  border: 2px solid transparent; border-radius: 14px; padding: 20px 12px;
+  cursor: pointer; font-family: var(--font); font-weight: 900; font-size: 15px;
+  transition: all 0.2s; display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.bw-choice-btn .choice-icon { font-size: 32px; }
+.choice-black { background: rgba(10,10,15,0.8); border-color: rgba(255,255,255,0.15); color: var(--text); }
+.choice-black:hover:not(:disabled) { border-color: var(--accent-red); background: rgba(255,51,85,0.1); }
+.choice-white { background: rgba(240,244,255,0.06); border-color: rgba(255,255,255,0.15); color: var(--text); }
+.choice-white:hover:not(:disabled) { border-color: var(--accent-blue); background: rgba(0,200,255,0.08); }
+.choice-correct { border-color: var(--accent-green) !important; background: rgba(0,230,118,0.1) !important; }
+.choice-wrong { border-color: var(--accent-red) !important; background: rgba(255,51,85,0.1) !important; }
+.bw-choice-btn:disabled { cursor: default; }
+.explanation {
+  background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px; margin-bottom: 20px; animation: fadeIn 0.3s ease;
+}
+.explanation-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.answer-badge { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 20px; }
+.badge-correct { background: rgba(0,230,118,0.2); color: var(--accent-green); }
+.badge-wrong { background: rgba(255,51,85,0.2); color: var(--accent-red); }
+.explanation-text { font-size: 13px; color: var(--text-dim); line-height: 1.8; }
+.next-btn {
+  width: 100%; background: linear-gradient(135deg, var(--accent-blue), #0088cc);
+  border: none; border-radius: 12px; color: #fff; font-family: var(--font);
+  font-size: 16px; font-weight: 700; padding: 16px; cursor: pointer; transition: opacity 0.2s;
+}
+.next-btn:hover { opacity: 0.9; }
+
+/* ─── RESULT ─── */
+.result-screen { padding: 20px 20px 40px; }
+.result-hero { text-align: center; padding: 24px 0 28px; }
+.result-icon { font-size: 64px; margin-bottom: 16px; }
+.result-rank {
+  font-family: var(--font-display); font-size: 28px; font-weight: 700; margin-bottom: 8px;
+  background: linear-gradient(135deg, var(--accent-gold), #ff8c00);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.result-score-display { font-size: 48px; font-weight: 900; color: var(--text); }
+.result-score-unit { font-size: 24px; color: var(--text-dim); }
+.result-score-label { font-size: 13px; color: var(--text-dim); margin-top: 4px; }
+.result-message { font-size: 13px; color: var(--text-dim); line-height: 1.7; margin-top: 12px; }
+.firebase-save-msg {
+  font-size: 12px; color: var(--accent-green); text-align: center;
+  padding: 8px; margin-bottom: 12px; animation: fadeIn 0.5s ease;
+}
+.result-breakdown {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px; margin-bottom: 16px;
+}
+.breakdown-title { font-size: 11px; color: var(--text-dim); letter-spacing: 1px; margin-bottom: 12px; font-weight: 700; }
+.breakdown-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.breakdown-row:last-child { border-bottom: none; }
+.breakdown-val { font-weight: 700; }
+.val-correct { color: var(--accent-green); }
+.val-wrong { color: var(--accent-red); }
+.result-actions { display: flex; flex-direction: column; gap: 10px; }
+.btn-primary {
+  width: 100%; background: linear-gradient(135deg, var(--accent-red), #cc0033);
+  border: none; border-radius: 12px; color: #fff; font-family: var(--font);
+  font-size: 15px; font-weight: 700; padding: 16px; cursor: pointer; transition: opacity 0.2s;
+}
+.btn-primary:hover { opacity: 0.9; }
+.btn-secondary {
+  width: 100%; background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+  border-radius: 12px; color: var(--text); font-family: var(--font);
+  font-size: 15px; font-weight: 700; padding: 14px; cursor: pointer; transition: background 0.2s;
+}
+.btn-secondary:hover { background: rgba(255,255,255,0.1); }
+
+/* ─── KYUJIN ─── */
+.kyujin-screen { padding: 0 0 40px; }
+.job-ad-card {
+  background: linear-gradient(135deg, rgba(255,215,0,0.06), rgba(0,230,118,0.04));
+  border: 1px solid rgba(255,215,0,0.25); border-radius: 14px; padding: 18px; margin: 16px 20px;
+}
+.job-ad-header { border-bottom: 1px solid rgba(255,215,0,0.2); padding-bottom: 10px; margin-bottom: 12px; }
+.job-ad-title { font-size: 15px; font-weight: 900; line-height: 1.4; color: var(--accent-gold); }
+.job-ad-row { display: flex; gap: 6px; margin-bottom: 6px; font-size: 12px; }
+.job-ad-key { color: var(--text-dim); min-width: 56px; }
+.job-ad-val { color: var(--text); flex: 1; line-height: 1.5; }
+.job-ad-appeal {
+  background: rgba(255,255,255,0.04); border-radius: 8px; padding: 10px;
+  font-size: 12px; color: #ffeb80; line-height: 1.7; margin-top: 10px; font-style: italic;
+}
+.kq-question { padding: 0 20px 12px; font-size: 15px; font-weight: 700; line-height: 1.6; }
+.kq-choices { display: flex; flex-direction: column; gap: 8px; padding: 0 20px; }
+.kq-choice {
+  background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 10px;
+  padding: 13px 16px; text-align: left; cursor: pointer; font-family: var(--font);
+  font-size: 13px; color: var(--text); transition: all 0.2s; line-height: 1.5;
+}
+.kq-choice:hover:not(:disabled) { background: rgba(255,215,0,0.08); border-color: rgba(255,215,0,0.3); }
+.kq-choice:disabled { cursor: default; }
+.kq-correct { border-color: var(--accent-green) !important; background: rgba(0,230,118,0.1) !important; }
+.kq-wrong { border-color: var(--accent-red) !important; background: rgba(255,51,85,0.08) !important; }
+.kq-explanation {
+  margin: 16px 20px; background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px; animation: fadeIn 0.3s ease;
+}
+.kq-exp-text { font-size: 13px; color: var(--text-dim); line-height: 1.8; margin-bottom: 10px; }
+.kq-tip {
+  background: rgba(0,200,255,0.08); border: 1px solid rgba(0,200,255,0.2);
+  border-radius: 8px; padding: 10px; font-size: 12px; color: var(--accent-blue); line-height: 1.7;
+}
+
+/* ─── SETTINGS ─── */
+.settings-screen { padding: 20px; }
+.settings-section-title {
+  font-size: 11px; color: var(--accent-gold); letter-spacing: 1px; font-weight: 700;
+  margin-bottom: 12px; margin-top: 24px;
+}
+.settings-section-title:first-child { margin-top: 0; }
+.q-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.q-item {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; display: flex; align-items: flex-start; gap: 10px;
+}
+.q-item-text { flex: 1; font-size: 12px; line-height: 1.5; color: var(--text-dim); }
+.q-item-badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; margin-bottom: 4px; display: inline-block; margin-right: 4px; }
+.q-del-btn {
+  background: rgba(255,51,85,0.15); border: 1px solid rgba(255,51,85,0.3);
+  border-radius: 6px; color: var(--accent-red); font-size: 11px; padding: 4px 8px;
+  cursor: pointer; white-space: nowrap; flex-shrink: 0;
+}
+.q-edit-btn {
+  background: rgba(0,200,255,0.12); border: 1px solid rgba(0,200,255,0.3);
+  border-radius: 6px; color: var(--accent-blue); font-size: 11px; padding: 4px 8px;
+  cursor: pointer; white-space: nowrap; flex-shrink: 0;
+}
+.q-item-actions { display: flex; flex-direction: column; gap: 5px; align-items: flex-end; }
+/* ─── EDIT MODAL ─── */
+.edit-modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 200;
+  display: none; align-items: flex-start; justify-content: center;
+  padding: 20px; overflow-y: auto;
+}
+.edit-modal-overlay.active { display: flex; }
+.edit-modal-box {
+  background: var(--card2); border: 1px solid var(--border2);
+  border-radius: 18px; padding: 24px; width: 100%; max-width: 440px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6); margin: auto;
+}
+.edit-modal-title {
+  font-family: var(--font-display); font-size: 16px; margin-bottom: 18px;
+  color: var(--accent-blue); display: flex; align-items: center; gap: 8px;
+}
+.edit-modal-actions { display: flex; gap: 10px; margin-top: 18px; }
+.edit-save-btn {
+  flex: 1; background: linear-gradient(135deg, var(--accent-blue), #0088cc);
+  border: none; border-radius: 10px; color: #fff; font-family: var(--font);
+  font-size: 14px; font-weight: 700; padding: 13px; cursor: pointer;
+}
+.edit-cancel-btn {
+  flex: 1; background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+  border-radius: 10px; color: var(--text-dim); font-family: var(--font);
+  font-size: 14px; padding: 13px; cursor: pointer;
+}
+.add-form {
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px; margin-bottom: 8px;
+}
+.form-label { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; margin-top: 12px; display: block; }
+.form-label:first-child { margin-top: 0; }
+.form-input, .form-textarea, .form-select {
+  width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text); font-family: var(--font);
+  font-size: 13px; padding: 10px 12px; outline: none; resize: vertical; transition: border-color 0.2s;
+}
+.form-input:focus, .form-textarea:focus, .form-select:focus { border-color: var(--accent-blue); }
+.form-select option { background: var(--dark); }
+.form-radio-group { display: flex; gap: 10px; }
+.form-radio {
+  flex: 1; background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px; cursor: pointer; text-align: center;
+  font-size: 13px; font-family: var(--font); color: var(--text-dim); transition: all 0.2s;
+}
+.form-radio.active-black { border-color: var(--accent-red); background: rgba(255,51,85,0.1); color: var(--accent-red); }
+.form-radio.active-white { border-color: var(--accent-blue); background: rgba(0,200,255,0.1); color: var(--accent-blue); }
+.add-btn {
+  width: 100%; background: linear-gradient(135deg, var(--accent-green), #00aa55);
+  border: none; border-radius: 10px; color: #000; font-family: var(--font);
+  font-size: 14px; font-weight: 900; padding: 13px; cursor: pointer; margin-top: 14px;
+}
+.reset-btn {
+  width: 100%; background: rgba(255,51,85,0.1); border: 1px solid rgba(255,51,85,0.3);
+  border-radius: 10px; color: var(--accent-red); font-family: var(--font);
+  font-size: 13px; padding: 12px; cursor: pointer; margin-top: 8px;
+}
+.tab-bar { display: flex; border-bottom: 1px solid var(--border); }
+.tab-btn {
+  flex: 1; padding: 12px; background: none; border: none;
+  border-bottom: 2px solid transparent; color: var(--text-dim);
+  font-family: var(--font); font-size: 13px; cursor: pointer; font-weight: 400; transition: all 0.2s;
+}
+.tab-btn.active { border-bottom-color: var(--accent-blue); color: var(--accent-blue); font-weight: 700; }
+
+/* ─── PASSWORD MODAL ─── */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100;
+  display: none; align-items: center; justify-content: center; padding: 20px;
+  animation: fadeIn 0.2s ease;
+}
+.modal-overlay.active { display: flex; }
+.modal-box {
+  background: var(--card2); border: 1px solid var(--border2);
+  border-radius: 18px; padding: 28px 24px; width: 100%; max-width: 360px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+}
+.modal-icon { font-size: 36px; text-align: center; margin-bottom: 12px; }
+.modal-title { font-family: var(--font-display); font-size: 18px; text-align: center; margin-bottom: 6px; }
+.modal-sub { font-size: 12px; color: var(--text-dim); text-align: center; margin-bottom: 20px; }
+.modal-input {
+  width: 100%; background: rgba(255,255,255,0.07); border: 1px solid var(--border2);
+  border-radius: 10px; color: var(--text); font-family: var(--font); font-size: 20px;
+  padding: 14px; outline: none; text-align: center; letter-spacing: 6px;
+  transition: border-color 0.2s; margin-bottom: 6px;
+}
+.modal-input:focus { border-color: var(--accent-blue); }
+.modal-error { font-size: 12px; color: var(--accent-red); text-align: center; min-height: 18px; margin-bottom: 16px; }
+.modal-actions { display: flex; gap: 10px; }
+.modal-cancel {
+  flex: 1; background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+  border-radius: 10px; color: var(--text-dim); font-family: var(--font); font-size: 14px;
+  padding: 13px; cursor: pointer; transition: background 0.2s;
+}
+.modal-submit {
+  flex: 1; background: linear-gradient(135deg, var(--accent-purple), #8040cc);
+  border: none; border-radius: 10px; color: #fff; font-family: var(--font);
+  font-size: 14px; font-weight: 700; padding: 13px; cursor: pointer;
+}
+
+/* ─── ANIMATIONS ─── */
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+.live-dot {
+  display: inline-block; width: 7px; height: 7px; background: var(--accent-green);
+  border-radius: 50%; margin-right: 5px; animation: pulse 1.5s infinite; vertical-align: middle;
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ========== HOME ========== -->
+  <div id="screen-home" class="screen active home">
+    <div class="home-header">
+      <div class="home-badge">QUIZ GAME</div>
+      <div class="home-title">ブラック or ホワイト？<br>企業体験</div>
+      <div class="home-subtitle">～社会の闇を暴露せよ～</div>
+    </div>
+    <div style="text-align:center">
+      <div class="nick-chip" id="nickChip" onclick="openNickModal()">
+        <span class="nick-chip-icon">⚡</span>
+        <span class="nick-chip-text" id="nickChipText">ニックネームを設定</span>
+        <span class="nick-chip-edit" id="nickChipEdit">✎</span>
+      </div>
+    </div>
+    <div class="game-cards">
+      <div class="game-card" onclick="goToBWDiff()">
+        <div class="game-card-icon">⚖️</div>
+        <div class="game-card-tag tag-bw">GAME 1</div>
+        <div class="game-card-title">ブラック企業診断</div>
+        <div class="game-card-desc">○×クイズ形式でブラック/ホワイトを判定！<br>あなたの社会人リテラシーを試せ</div>
+        <div class="game-card-arrow">›</div>
+      </div>
+      <div class="game-card" onclick="goToKyujin()">
+        <div class="game-card-icon">📋</div>
+        <div class="game-card-tag tag-kj">GAME 2</div>
+        <div class="game-card-title">求人広告のウソを見抜け</div>
+        <div class="game-card-desc">架空の求人票から怪しい箇所を発見！<br>就活で役立つ本物の知識が身につく</div>
+        <div class="game-card-arrow">›</div>
+      </div>
+    </div>
+    <div class="home-ranking">
+      <div class="home-ranking-header">
+        <div class="home-ranking-title">🏆 TOP RANKING</div>
+        <div class="home-ranking-live"><span class="live-dot"></span>LIVE</div>
+      </div>
+      <div id="rankingList"><div class="rank-loading">読み込み中...</div></div>
+    </div>
+    <div class="bottom-nav">
+      <button class="nav-btn" onclick="openSettingsModal()">⚙️ 問題管理</button>
+    </div>
+  </div>
+
+  <!-- ========== BW DIFFICULTY ========== -->
+  <div id="screen-bw-diff" class="screen">
+    <div class="header-bar">
+      <button class="back-btn" onclick="showScreen('home')">‹</button>
+      <div class="header-title">ブラック企業診断</div>
+    </div>
+    <div class="diff-screen">
+      <div class="diff-title">難易度を選んでください</div>
+      <div class="diff-sub">問題はランダムに出題されます</div>
+      <div class="diff-cards">
+        <div class="diff-card diff-normal" onclick="startBWQuiz('normal')">
+          <div class="diff-card-icon">🌙</div>
+          <div class="diff-card-name" style="color:var(--accent-blue)">ふつう</div>
+          <div class="diff-card-desc">基本的な労働法・ブラック企業の特徴<br>学生でもわかる問題レベル</div>
+        </div>
+        <div class="diff-card diff-hard" onclick="startBWQuiz('hard')">
+          <div class="diff-card-icon">🔥</div>
+          <div class="diff-card-name" style="color:var(--accent-red)">むずかしい</div>
+          <div class="diff-card-desc">法律の細かい知識・グレーゾーンの問題<br>社会人でも悩む問題レベル</div>
+        </div>
+        <div class="diff-card diff-mix" onclick="startBWQuiz('all')">
+          <div class="diff-card-icon">⚡</div>
+          <div class="diff-card-name" style="color:var(--accent-gold)">ランダムMIX</div>
+          <div class="diff-card-desc">全難易度の問題をシャッフル！<br>本番さながらの実力チェック</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== BW QUIZ ========== -->
+  <div id="screen-bw-quiz" class="screen">
+    <div class="header-bar">
+      <button class="back-btn" onclick="showScreen('bw-diff')">‹</button>
+      <div class="header-title">ブラック企業診断</div>
+      <div class="header-badge" id="bwDiffBadge"></div>
+    </div>
+    <div class="quiz-screen">
+      <div class="quiz-progress">
+        <div class="progress-info">
+          <span class="progress-num" id="bwProgressNum"></span>
+          <span class="progress-score" id="bwProgressScore"></span>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" id="bwProgressFill"></div></div>
+      </div>
+      <div class="quiz-body">
+        <div class="diff-chip" id="bwDiffChip"></div>
+        <div class="quiz-question-text" id="bwQuestion"></div>
+        <div class="bw-choices">
+          <button class="bw-choice-btn choice-black" id="btnBlack" onclick="answerBW('black')">
+            <span class="choice-icon">🖤</span><span>ブラック企業</span>
+          </button>
+          <button class="bw-choice-btn choice-white" id="btnWhite" onclick="answerBW('white')">
+            <span class="choice-icon">🤍</span><span>ホワイト企業</span>
+          </button>
+        </div>
+        <div class="explanation" id="bwExplanation" style="display:none">
+          <div class="explanation-header">
+            <span class="answer-badge" id="bwAnswerBadge"></span>
+            <span style="font-size:12px;color:var(--text-dim)" id="bwCorrectAnswer"></span>
+          </div>
+          <div class="explanation-text" id="bwExplanationText"></div>
+        </div>
+        <button class="next-btn" id="bwNextBtn" style="display:none" onclick="nextBWQuestion()"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== BW RESULT ========== -->
+  <div id="screen-bw-result" class="screen result-screen">
+    <div class="result-hero">
+      <div class="result-icon" id="bwResultIcon"></div>
+      <div class="result-rank" id="bwResultRank"></div>
+      <div class="result-score-display"><span id="bwResultScore"></span><span class="result-score-unit"> / <span id="bwResultTotal"></span></span></div>
+      <div class="result-score-label">問正解</div>
+      <div class="result-message" id="bwResultMessage"></div>
+    </div>
+    <div class="firebase-save-msg" id="bwSaveMsg" style="display:none">🔥 スコアがランキングに保存されました！</div>
+    <div class="result-breakdown">
+      <div class="breakdown-title">RESULT</div>
+      <div class="breakdown-row"><span>プレイヤー</span><span class="breakdown-val" id="bwResultPlayer"></span></div>
+      <div class="breakdown-row"><span>正解数</span><span class="breakdown-val val-correct" id="bwResultCorrect"></span></div>
+      <div class="breakdown-row"><span>不正解数</span><span class="breakdown-val val-wrong" id="bwResultWrong"></span></div>
+      <div class="breakdown-row"><span>正答率</span><span class="breakdown-val" id="bwResultPct"></span></div>
+      <div class="breakdown-row"><span>称号</span><span class="breakdown-val" id="bwResultTitle" style="color:var(--accent-gold)"></span></div>
+    </div>
+    <div class="result-actions">
+      <button class="btn-primary" onclick="showScreen('bw-diff')">もう一度チャレンジ</button>
+      <button class="btn-secondary" onclick="showScreen('home')">ホームに戻る</button>
+    </div>
+  </div>
+
+  <!-- ========== KQ DIFFICULTY ========== -->
+  <div id="screen-kq-diff" class="screen">
+    <div class="header-bar">
+      <button class="back-btn" onclick="showScreen('home')">‹</button>
+      <div class="header-title">求人広告のウソを見抜け</div>
+    </div>
+    <div class="diff-screen">
+      <div class="diff-title">難易度を選んでください</div>
+      <div class="diff-sub">求人票からウソを見抜け！ランダム10問出題</div>
+      <div class="diff-cards">
+        <div class="diff-card diff-normal" onclick="startKyujinQuiz('normal')">
+          <div class="diff-card-icon">📋</div>
+          <div class="diff-card-name" style="color:var(--accent-blue)">ふつう</div>
+          <div class="diff-card-desc">わかりやすいブラック表現・典型的な危険ワード<br>就活初心者でも気づける問題レベル</div>
+        </div>
+        <div class="diff-card diff-hard" onclick="startKyujinQuiz('hard')">
+          <div class="diff-card-icon">🔍</div>
+          <div class="diff-card-name" style="color:var(--accent-red)">むずかしい</div>
+          <div class="diff-card-desc">法律・制度の知識が必要なグレーゾーン<br>社会人でも騙される問題レベル</div>
+        </div>
+        <div class="diff-card diff-mix" onclick="startKyujinQuiz('all')">
+          <div class="diff-card-icon">⚡</div>
+          <div class="diff-card-name" style="color:var(--accent-gold)">ランダムMIX</div>
+          <div class="diff-card-desc">全難易度シャッフル！本番さながらの実力チェック</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== KYUJIN QUIZ ========== -->
+  <div id="screen-kyujin" class="screen kyujin-screen">
+    <div class="header-bar">
+      <button class="back-btn" onclick="showScreen('kq-diff')">‹</button>
+      <div class="header-title">求人広告のウソを見抜け</div>
+      <div class="header-badge badge-hard" id="kqProgress"></div>
+    </div>
+    <div class="job-ad-card">
+      <div class="job-ad-header"><div class="job-ad-title" id="kqAdTitle"></div></div>
+      <div id="kqAdRows"></div>
+      <div class="job-ad-appeal" id="kqAdAppeal"></div>
+    </div>
+    <div class="kq-question" id="kqQuestion"></div>
+    <div class="kq-choices" id="kqChoices"></div>
+    <div class="kq-explanation" id="kqExplanation" style="display:none">
+      <div class="answer-badge" id="kqAnswerBadge" style="margin-bottom:10px;display:inline-block"></div>
+      <div class="kq-exp-text" id="kqExpText"></div>
+      <div class="kq-tip" id="kqTip"></div>
+      <button class="next-btn" style="margin-top:14px" onclick="nextKQQuestion()">次へ</button>
+    </div>
+  </div>
+
+  <!-- ========== KQ RESULT ========== -->
+  <div id="screen-kq-result" class="screen result-screen">
+    <div class="result-hero">
+      <div class="result-icon" id="kqResultIcon"></div>
+      <div class="result-rank" id="kqResultRank"></div>
+      <div class="result-score-display"><span id="kqResultScore"></span><span class="result-score-unit"> / <span id="kqResultTotal"></span></span></div>
+      <div class="result-score-label">問正解</div>
+      <div class="result-message" id="kqResultMessage"></div>
+    </div>
+    <div class="result-breakdown">
+      <div class="breakdown-title">RESULT</div>
+      <div class="breakdown-row"><span>プレイヤー</span><span class="breakdown-val" id="kqResultPlayer"></span></div>
+      <div class="breakdown-row"><span>正解数</span><span class="breakdown-val val-correct" id="kqResultCorrect"></span></div>
+      <div class="breakdown-row"><span>正答率</span><span class="breakdown-val" id="kqResultPct"></span></div>
+    </div>
+    <div class="result-actions">
+      <button class="btn-primary" onclick="showScreen('kq-diff')">もう一度チャレンジ</button>
+      <button class="btn-secondary" onclick="showScreen('home')">ホームに戻る</button>
+    </div>
+  </div>
+
+  <!-- ========== SETTINGS ========== -->
+  <div id="screen-settings" class="screen">
+    <div class="header-bar">
+      <button class="back-btn" onclick="showScreen('home')">‹</button>
+      <div class="header-title">⚙️ 問題管理</div>
+    </div>
+    <div class="tab-bar">
+      <button class="tab-btn active" id="tabBtnBW" onclick="switchTab('bw')">⚖️ ブラック診断</button>
+      <button class="tab-btn" id="tabBtnKQ" onclick="switchTab('kyujin')">📋 求人ウソ問題</button>
+    </div>
+    <div class="settings-screen">
+      <div id="settingsBW">
+        <div class="settings-section-title"><span class="live-dot"></span>現在の問題一覧</div>
+        <div class="q-list" id="bwQList"></div>
+        <div class="settings-section-title">➕ 問題を追加</div>
+        <div class="add-form">
+          <label class="form-label">問題文</label>
+          <textarea class="form-textarea" id="addBWQuestion" rows="3" placeholder="例: 入社後に残業代が出なかった..."></textarea>
+          <label class="form-label">正解</label>
+          <div class="form-radio-group">
+            <button class="form-radio active-black" id="radioBlack" onclick="selectAnswer('black')">🖤 ブラック</button>
+            <button class="form-radio" id="radioWhite" onclick="selectAnswer('white')">🤍 ホワイト</button>
+          </div>
+          <label class="form-label">難易度</label>
+          <select class="form-select" id="addBWDifficulty">
+            <option value="normal">ふつう</option>
+            <option value="hard">むずかしい</option>
+          </select>
+          <label class="form-label">解説</label>
+          <textarea class="form-textarea" id="addBWExplanation" rows="3" placeholder="解説テキスト"></textarea>
+          <button class="add-btn" onclick="addBWQuestion()">+ 問題を追加する</button>
+        </div>
+      </div>
+      <div id="settingsKQ" style="display:none">
+        <div class="settings-section-title"><span class="live-dot"></span>現在の問題一覧</div>
+        <div class="q-list" id="kqQList"></div>
+        <div class="settings-section-title">➕ 求人問題を追加</div>
+        <div class="add-form">
+          <label class="form-label">会社名・タイトル</label>
+          <input class="form-input" id="kqTitle" placeholder="例: 株式会社〇〇｜営業スタッフ募集" />
+          <label class="form-label">給与</label>
+          <input class="form-input" id="kqSalary" placeholder="例: 月給20万円～" />
+          <label class="form-label">時間</label>
+          <input class="form-input" id="kqHours" placeholder="例: 9:00～18:00" />
+          <label class="form-label">休日</label>
+          <input class="form-input" id="kqHoliday" placeholder="例: 土日祝休み" />
+          <label class="form-label">福利厚生</label>
+          <input class="form-input" id="kqWelfare" placeholder="例: 社会保険完備" />
+          <label class="form-label">アピール文</label>
+          <textarea class="form-textarea" id="kqAppeal" rows="2" placeholder="未経験歓迎！..."></textarea>
+          <label class="form-label">難易度</label>
+          <select class="form-select" id="kqDifficulty">
+            <option value="normal">ふつう</option>
+            <option value="hard">むずかしい</option>
+          </select>
+          <label class="form-label">設問文</label>
+          <textarea class="form-textarea" id="kqQuestion" rows="2"></textarea>
+          <label class="form-label">選択肢A</label><input class="form-input" id="kqC0" />
+          <label class="form-label">選択肢B</label><input class="form-input" id="kqC1" />
+          <label class="form-label">選択肢C</label><input class="form-input" id="kqC2" />
+          <label class="form-label">選択肢D</label><input class="form-input" id="kqC3" />
+          <label class="form-label">正解 (0=A, 1=B, 2=C, 3=D)</label>
+          <select class="form-select" id="kqAnswer">
+            <option value="0">A</option><option value="1">B</option>
+            <option value="2">C</option><option value="3">D</option>
+          </select>
+          <label class="form-label">解説</label>
+          <textarea class="form-textarea" id="kqExplanationInput" rows="3"></textarea>
+          <label class="form-label">💡 就活ポイント</label>
+          <textarea class="form-textarea" id="kqTipInput" rows="2"></textarea>
+          <button class="add-btn" onclick="addKQQuestion()">+ 問題を追加する</button>
+        </div>
+      </div>
+      <button class="reset-btn" onclick="resetAll()">⚠️ 全データをリセット</button>
+    </div>
+  </div>
+
+</div><!-- /app -->
+
+<!-- Nickname Modal -->
+<div class="modal-overlay" id="nickModal">
+  <div class="modal-box">
+    <div class="modal-icon">⚡</div>
+    <div class="modal-title">ニックネーム設定</div>
+    <div class="modal-sub">ランキングに表示される名前を入力してください</div>
+    <input class="nick-modal-input" id="nickModalInput" type="text" maxlength="12" placeholder="例: たろう" />
+    <button class="nick-modal-submit" onclick="submitNickModal()">決定してはじめる</button>
+
+  </div>
+</div>
+
+<!-- BW Edit Modal -->
+<div class="edit-modal-overlay" id="editBWModal">
+  <div class="edit-modal-box">
+    <div class="edit-modal-title">✏️ ブラック診断 問題を編集</div>
+    <input type="hidden" id="editBWId" />
+    <label class="form-label">問題文</label>
+    <textarea class="form-textarea" id="editBWQuestion" rows="3"></textarea>
+    <label class="form-label">正解</label>
+    <div class="form-radio-group">
+      <button class="form-radio" id="editRadioBlack" onclick="editSelectAnswer('black')">🖤 ブラック</button>
+      <button class="form-radio" id="editRadioWhite" onclick="editSelectAnswer('white')">🤍 ホワイト</button>
+    </div>
+    <label class="form-label">難易度</label>
+    <select class="form-select" id="editBWDifficulty">
+      <option value="normal">ふつう</option>
+      <option value="hard">むずかしい</option>
+    </select>
+    <label class="form-label">解説</label>
+    <textarea class="form-textarea" id="editBWExplanation" rows="3"></textarea>
+    <div class="edit-modal-actions">
+      <button class="edit-cancel-btn" onclick="closeEditBWModal()">キャンセル</button>
+      <button class="edit-save-btn" onclick="saveEditBW()">💾 保存する</button>
+    </div>
+  </div>
+</div>
+
+<!-- KQ Edit Modal -->
+<div class="edit-modal-overlay" id="editKQModal">
+  <div class="edit-modal-box">
+    <div class="edit-modal-title">✏️ 求人問題を編集</div>
+    <input type="hidden" id="editKQId" />
+    <label class="form-label">会社名・タイトル</label>
+    <input class="form-input" id="editKQTitle" />
+    <label class="form-label">給与</label>
+    <input class="form-input" id="editKQSalary" />
+    <label class="form-label">時間</label>
+    <input class="form-input" id="editKQHours" />
+    <label class="form-label">休日</label>
+    <input class="form-input" id="editKQHoliday" />
+    <label class="form-label">福利厚生</label>
+    <input class="form-input" id="editKQWelfare" />
+    <label class="form-label">アピール文</label>
+    <textarea class="form-textarea" id="editKQAppeal" rows="2"></textarea>
+    <label class="form-label">設問文</label>
+    <textarea class="form-textarea" id="editKQQuestion" rows="2"></textarea>
+    <label class="form-label">選択肢A</label><input class="form-input" id="editKQC0" />
+    <label class="form-label">選択肢B</label><input class="form-input" id="editKQC1" />
+    <label class="form-label">選択肢C</label><input class="form-input" id="editKQC2" />
+    <label class="form-label">選択肢D</label><input class="form-input" id="editKQC3" />
+    <label class="form-label">正解 (0=A, 1=B, 2=C, 3=D)</label>
+    <select class="form-select" id="editKQAnswer">
+      <option value="0">A</option><option value="1">B</option>
+      <option value="2">C</option><option value="3">D</option>
+    </select>
+    <label class="form-label">解説</label>
+    <textarea class="form-textarea" id="editKQExplanation" rows="3"></textarea>
+    <label class="form-label">💡 就活ポイント</label>
+    <textarea class="form-textarea" id="editKQTip" rows="2"></textarea>
+    <div class="edit-modal-actions">
+      <button class="edit-cancel-btn" onclick="closeEditKQModal()">キャンセル</button>
+      <button class="edit-save-btn" onclick="saveEditKQ()">💾 保存する</button>
+    </div>
+  </div>
+</div>
+
+<!-- Password Modal -->
+<div class="modal-overlay" id="pwModal">
+  <div class="modal-box">
+    <div class="modal-icon">🔐</div>
+    <div class="modal-title">管理者認証</div>
+    <div class="modal-sub">問題管理画面にアクセスするには<br>パスワードが必要です</div>
+    <input class="modal-input" id="pwInput" type="password" inputmode="numeric" maxlength="6" placeholder="••••" />
+    <div class="modal-error" id="pwError"></div>
+    <div class="modal-actions">
+      <button class="modal-cancel" onclick="closeModal()">キャンセル</button>
+      <button class="modal-submit" onclick="submitPassword()">認証する</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// DATA
+// ============================================================
+const SETTINGS_PASSWORD = "0308";
+const STORAGE_KEY_BW = "bw_quiz_bw_questions";
+const STORAGE_KEY_KQ = "bw_quiz_kyujin_questions";
+
+const DEFAULT_BW_QUESTIONS = [
+  // ===== ふつう =====
+  { id: 1, difficulty: "normal", question: "面接で「残業はほぼありません」と言われたが、入社後に「みなし残業40時間込みの給与です」と説明された。", answer: "black", explanation: "「みなし残業（固定残業代）」は残業代をあらかじめ給与に含める仕組み。40時間分が含まれているなら面接での説明は不十分であり、不透明な労働条件の典型例です。" },
+  { id: 2, difficulty: "normal", question: "有給休暇を申請したら「忙しいから来月以降にして」と毎月断られ、結局1年で一度も使えなかった。", answer: "black", explanation: "労働基準法では会社が時季変更権を持ちますが、使えないまま1年消滅は違法の可能性があります。年5日の有給取得は義務です。" },
+  { id: 3, difficulty: "normal", question: "新入社員研修で「失敗したら大声で謝罪させる」「できないやつは立たせる」などのスパルタ研修を実施している。", answer: "black", explanation: "精神的に追い詰める研修はパワハラに該当する可能性があります。成長を促すのと人格否定は別物です。" },
+  { id: 4, difficulty: "normal", question: "毎月、社員全員に売上目標が課せられ、達成できなかった社員は給与の一部が引かれる制度がある。", answer: "black", explanation: "ノルマ未達を理由に給与を減額するのは、労働基準法の「賃金全額払いの原則」に違反する可能性があります。" },
+  { id: 5, difficulty: "normal", question: "社員食堂が無料で利用でき、フレックスタイム制で朝9時～11時の間で出社時間を選べる。", answer: "white", explanation: "福利厚生の充実とフレックスタイム制の導入は社員の生活の質を高める取り組みです。働き方の自由度が高い職場はホワイト企業の特徴の一つです。" },
+  { id: 6, difficulty: "normal", question: "退職届を出したところ「損害賠償を請求する」と脅され、1ヶ月後まで退職できなかった。", answer: "black", explanation: "退職の自由は法律で保障されており、退職を理由にした損害賠償請求は原則として認められません。脅しによる退職阻止は違法行為です。" },
+  { id: 7, difficulty: "normal", question: "産休・育休取得後に職場復帰した女性社員に、同等以上の役職・業務を用意している。", answer: "white", explanation: "育休復帰後の降格・減給はマタハラに当たる可能性があります。復帰後も同等以上の待遇を保障する企業は法令を遵守した優良企業です。" },
+  { id: 8, difficulty: "normal", question: "「うちは家族みたいな会社だから」が口癖の上司が、休日に頻繁にLINEや電話で業務連絡をしてくる。", answer: "black", explanation: "「家族経営」を理由に労働者の権利を侵害するのは典型的なブラック体質です。休日の業務連絡は原則として時間外労働に当たります。" },
+  { id: 13, difficulty: "normal", question: "残業が月80時間を超えた社員に対し、会社が産業医との面談を義務づけている。", answer: "white", explanation: "月80時間超の残業は「過労死ライン」とされます。産業医面談を義務づけるのは労働安全衛生法に則った正しい対応であり、社員の健康を守る姿勢の表れです。" },
+  { id: 14, difficulty: "normal", question: "会社がSNSで「うちの社員は全員自分の意志で毎日終電まで働いている」と発信している。", answer: "black", explanation: "「自分の意志」という建前で長時間労働を正当化するのは典型的なブラック企業の手口です。実態として強制されているケースが多く、労働基準法違反の温床になります。" },
+  { id: 15, difficulty: "normal", question: "入社時に「会社の秘密を漏らしたら100万円の罰金」という誓約書にサインさせられた。", answer: "black", explanation: "労働基準法第16条は「違約金・損害賠償額の予定」を禁止しています。実際の損害が発生した場合の請求は別ですが、入社時にあらかじめ罰金額を定めることは違法です。" },
+  { id: 16, difficulty: "normal", question: "会社が年に1回、全社員を対象にストレスチェックを実施し、結果を元に職場改善を行っている。", answer: "white", explanation: "50人以上の事業場でのストレスチェックは法的義務です。さらに結果を職場改善に活かしている点は、社員のメンタルヘルスを重視する優良企業の姿勢です。" },
+  { id: 17, difficulty: "normal", question: "上司が部下のデスクに来て「お前みたいな使えないやつはいらない」と大声で怒鳴った。", answer: "black", explanation: "人格を否定する発言や大声での怒鳴りはパワーハラスメントに該当します。改正労働施策総合推進法（パワハラ防止法）により、企業には防止措置義務があります。" },
+  { id: 18, difficulty: "normal", question: "アルバイトとして週5日フルタイムで1年以上働いているが、有給休暇をもらったことがない。", answer: "black", explanation: "雇用形態に関わらず、週5日以上・6ヶ月以上継続勤務した労働者には年10日の有給休暇が付与されます。アルバイトも例外ではありません。" },
+  { id: 19, difficulty: "normal", question: "会社が毎月給与明細を電子で配布しており、紙での発行は希望者のみ対応している。", answer: "white", explanation: "給与明細の電子化は法令上認められており、違法ではありません。希望者に紙で対応する柔軟な姿勢も問題ありません。" },
+  { id: 20, difficulty: "normal", question: "「自己成長のため」として、業務に直接関係ない資格の取得費用を自己負担させ、合格したら一部返金する制度がある。", answer: "black", explanation: "業務に必要な資格であれば会社負担が原則です。「自己成長」の名目で費用を社員に押しつけ、しかも一部しか返金しない制度は労働者に不当な負担を強いています。" },
+  // ===== むずかしい =====
+  { id: 9, difficulty: "hard", question: "月給25万円（みなし残業45時間分含む）と求人票に記載があり、45時間を超えた分は別途残業代を支払うと明示されている。", answer: "white", explanation: "みなし残業制度自体は合法です。ポイントは「超過分を別途支払うか」どうか。45時間を超えた残業代を明示的に追加支給するなら法令に沿った運用です。" },
+  { id: 10, difficulty: "hard", question: "試用期間中は正社員と同じ業務をするが、社会保険への加入は試用期間終了後からと会社に言われた。", answer: "black", explanation: "試用期間であっても週20時間以上・31日以上の雇用見込みがある場合は初日から社会保険加入が義務です。試用期間を理由にした加入遅延は違法です。" },
+  { id: 11, difficulty: "hard", question: "会社が社員に「自己啓発のため」として業務時間外の勉強会参加を推奨しているが、参加は任意で強制でない。", answer: "white", explanation: "完全に任意で参加不参加に不利益が生じないなら合法です。ただし「事実上強制」になっていないか、参加状況が評価に影響していないか注意が必要です。" },
+  { id: 12, difficulty: "hard", question: "営業職として採用されたが、入社1ヶ月で「管理部門に異動」と一方的に告げられ、給与も変わった。", answer: "black", explanation: "職種限定で採用された場合、一方的な職種変更は契約違反になる可能性があります。給与変更を伴う場合はさらに問題で、同意なく条件を変えることは許されません。" },
+  { id: 21, difficulty: "hard", question: "管理職（課長職）に昇進したため残業代が出なくなったが、実態は部下もおらず、経営への関与もほとんどない。", answer: "black", explanation: "「管理監督者」として残業代を払わないためには、経営への関与・出退勤の自由・待遇の優遇が必要です。名ばかり管理職は労基法違反です。" },
+  { id: 22, difficulty: "hard", question: "会社が「1年単位の変形労働時間制」を導入しており、繁忙期は1日10時間・週6日勤務することがある。", answer: "white", explanation: "1年単位の変形労働時間制は労使協定を結べば合法的に導入できます。繁忙期に長く働かせる代わりに閑散期を短くする仕組みで、法令上認められた制度です。" },
+  { id: 23, difficulty: "hard", question: "会社が副業を就業規則で全面禁止しており、違反した社員を懲戒処分にした。", answer: "black", explanation: "副業・兼業は原則自由であり、合理的な理由のない全面禁止は問題があります。競業避止や情報漏洩リスクがない副業まで禁止し懲戒するのは過剰です。" },
+  { id: 24, difficulty: "hard", question: "会社が「同一労働同一賃金」の原則に基づき、同じ業務をするパートと正社員の基本給の差を縮小した。", answer: "white", explanation: "パートタイム・有期雇用労働法により、同一労働同一賃金の原則が義務化されています。格差是正に取り組む企業は法令遵守の姿勢を示しています。" },
+  { id: 25, difficulty: "hard", question: "在宅勤務中の社員に対し、会社がPCの操作ログや定期的なスクリーンショットで勤務状況を監視している。", answer: "black", explanation: "過度な監視はプライバシー侵害やハラスメントに当たる可能性があります。テレワークガイドラインでも「適正な労務管理」と「過度な監視の禁止」のバランスが求められます。" },
+  { id: 26, difficulty: "hard", question: "会社が「高度プロフェッショナル制度」を導入し、年収1075万円以上の専門職社員に適用している。", answer: "white", explanation: "高度プロフェッショナル制度は年収要件・職種要件・本人同意など厳格な要件のもと合法的に導入できる制度です。要件を満たせば労働時間規制の対象外となります。" },
+  { id: 27, difficulty: "hard", question: "会社が「競業避止義務」として、退職後2年間・全国で同業他社への転職を禁止する契約を結んでいる。", answer: "black", explanation: "競業避止義務は一定の合理性があれば有効ですが、期間・地域・対象が広すぎる場合は無効とされることがあります。全国・2年間の全面禁止は過度で無効とされる可能性が高いです。" },
+  { id: 28, difficulty: "hard", question: "会社が社員に対し、労使協定（36協定）なしに月45時間を超える残業をさせている。", answer: "black", explanation: "36協定なしに法定労働時間を超えた残業をさせることは労働基準法違反です。違反企業には6ヶ月以下の懲役または30万円以下の罰金が科される可能性があります。" },
+  { id: 29, difficulty: "hard", question: "会社が就業規則を変更し、退職金制度を廃止した。変更は労働基準監督署に届け出済みで、社員への周知も行った。", answer: "black", explanation: "就業規則の不利益変更には「合理的な理由」と「十分な周知」が必要です。届出・周知だけでは不十分で、退職金廃止という大きな不利益変更は原則として無効になります。" },
+  { id: 30, difficulty: "hard", question: "会社が「事業場外みなし労働時間制」を外回り営業職に適用しており、実際の労働時間は8時間とみなされている。", answer: "white", explanation: "外回り営業など労働時間の把握が困難な業務では事業場外みなし制が適用できます。所定労働時間（8時間）をみなし時間とすることは適法です。ただし実態との乖離が大きい場合は問題になります。" },
+  // ===== 追加ふつう =====
+  { id: 31, difficulty: "normal", question: "「頑張れば正社員になれる」と言われ、2年以上アルバイトのまま働かされ続けている。", answer: "black", explanation: "口約束だけで正社員登用を引き延ばし続けるのはブラックな手口です。有期雇用が5年を超えると無期転換申込権が発生しますが、それ以前にも約束不履行は問題です。" },
+  { id: 32, difficulty: "normal", question: "会社が毎週月曜日に全社員参加必須の朝礼を業務開始30分前に設定しており、その時間の賃金は支払われない。", answer: "black", explanation: "使用者の指揮命令下にある時間は「労働時間」として賃金支払い義務があります。強制参加の朝礼は業務開始前でも労働時間であり、賃金なしは違法です。" },
+  { id: 33, difficulty: "normal", question: "入社時に「給与から毎月1万円を積み立て、1年後に返金する」という制度への同意を求められた。", answer: "black", explanation: "労働基準法第18条は「強制貯金」を禁止しています。労使協定のない一方的な賃金天引きは違法です。社員のお金を強制的に預かる行為は認められません。" },
+  { id: 34, difficulty: "normal", question: "会社が社内の相談窓口（ハラスメント相談）を設置し、外部の専門機関にも委託している。", answer: "white", explanation: "パワハラ防止法（労働施策総合推進法）により、事業主はハラスメント防止措置が義務です。外部委託まで行っているのは法令遵守に積極的な姿勢であり、優良企業の特徴です。" },
+  { id: 35, difficulty: "normal", question: "上司が「お前の代わりはいくらでもいる」「嫌なら辞めろ」と日常的に部下に言っている。", answer: "black", explanation: "優越的地位を利用した精神的攻撃はパワハラに該当します。パワハラ防止法では事業主がこうした言動を防止する措置を講じる義務があります。" },
+  { id: 36, difficulty: "normal", question: "会社が法律の義務に従い、36協定（時間外・休日労働に関する協定）を労働基準監督署に届け出している。", answer: "white", explanation: "36協定の締結・届け出は法定残業をさせるための前提条件であり、法を遵守した正しい対応です。届け出なしに残業させることは労働基準法違反になります。" },
+  { id: 37, difficulty: "normal", question: "採用面接で「結婚の予定はありますか」「子供は何人ほしいですか」と質問された。", answer: "black", explanation: "就職差別につながる恐れのある不適切な質問です。厚生労働省は家族構成・出産・育児に関する質問を採用面接で行わないよう指導しています。" },
+  { id: 38, difficulty: "normal", question: "給与明細に「教育訓練費」として毎月5,000円が天引きされているが、入社時にそのような説明はなかった。", answer: "black", explanation: "賃金は全額支払いが原則（労基法24条）であり、本人の同意なく給与から天引きすることは違法です。入社時の説明もなく天引きする行為は問題です。" },
+  // ===== 追加むずかしい =====
+  { id: 39, difficulty: "hard", question: "会社が「試用期間中は解雇しやすい」として、業務能力に問題がない社員を試用期間中に解雇した。", answer: "black", explanation: "試用期間中の解雇も「客観的に合理的な理由」が必要です。能力・態度に問題がない場合の解雇は、たとえ試用期間中でも不当解雇となる可能性があります。" },
+  { id: 40, difficulty: "hard", question: "会社が「出向」命令を出し、社員を別会社で3年間勤務させることにした。出向中の賃金・待遇は現在と変わらない。", answer: "white", explanation: "出向命令は就業規則や労働契約に根拠があり、賃金・待遇が維持される場合、原則として有効です。会社間の人事交流・能力開発目的で広く行われる正当な制度です。" },
+  { id: 41, difficulty: "hard", question: "会社が業績不振を理由に、40代社員のみを対象にした「早期退職優遇制度」を設けた。", answer: "black", explanation: "特定年齢層のみを対象にした事実上の整理解雇は、年齢差別・不当解雇の問題があります。「優遇制度」の名目でも実質的に強制される場合は問題です。" },
+  { id: 42, difficulty: "hard", question: "会社が労使協定を締結した上で、賃金の一部を現物（食事・住居）で支払っている。", answer: "white", explanation: "賃金は通貨払いが原則ですが、労使協定がある場合は現物給与も認められます。食事・住居などの現物給与は法令に従って評価額を算出すれば合法です。" },
+  { id: 43, difficulty: "hard", question: "会社が「業務上の必要性」を理由に、育休から復帰した社員を以前より格下げのポジションに配置した。", answer: "black", explanation: "育休取得・復帰を理由とした不利益取扱いはマタハラ・パタハラに該当します。「業務上の必要性」が認められるためには高いハードルがあり、単なる降格は違法です。" },
+  { id: 44, difficulty: "hard", question: "会社が「職務発明」として社員が開発した特許の権利を会社に帰属させる規定を就業規則に設けている。", answer: "white", explanation: "特許法35条の改正（2015年）により、職務発明について会社帰属を就業規則で定めることが認められています。ただし社員への相当の利益（報奨金等）付与が条件です。" },
+];
+
+const DEFAULT_KQ_QUESTIONS = [
+  // ===== ふつう =====
+  { id: 1, difficulty: "normal", jobAd: { title: "株式会社フューチャードリーム｜営業スタッフ募集", salary: "月給18万円～（各種手当含む）", hours: "9:00～18:00（実働8時間）", holiday: "土日祝休み（年間休日120日）", welfare: "社会保険完備、交通費支給（上限2万円）、資格取得支援", appeal: "＼未経験歓迎！やる気のある方大募集！／ 完全週休2日制！アットホームな職場です。残業ほぼなし！若手が活躍中！" }, question: "この求人広告の中で最も注意すべき「怪しい表現」はどれですか？", choices: ["「未経験歓迎」という表現", "「月給18万円～（各種手当含む）」という給与表記", "「アットホームな職場」という職場環境の表現", "「資格取得支援」という福利厚生"], answer: 1, explanation: "「各種手当含む」が最大の危険信号です。月給18万円の中にみなし残業代・皆勤手当などが含まれている可能性があり、基本給が極めて低い場合があります。", tip: "💡 就活ポイント：給与に「各種手当含む」とある場合、「基本給はおいくらですか？」と必ず質問しましょう。" },
+  { id: 2, difficulty: "normal", jobAd: { title: "有限会社トップセールス｜営業マネージャー候補", salary: "年収400万～1000万円（完全歩合制）", hours: "フレックスタイム制（コアタイムなし）", holiday: "週休2日（シフト制）", welfare: "社会保険完備", appeal: "頑張った分だけ稼げる！実力主義の会社です。トップ営業マンは月収100万円超え！自由な働き方で収入も青天井！" }, question: "この求人票で特に確認すべきリスクはどれですか？", choices: ["フレックスタイム制の導入", "完全歩合制で固定給がない可能性", "シフト制での週休2日", "有限会社であること"], answer: 1, explanation: "「完全歩合制」は固定給がゼロの可能性があります。売上がなければ収入もゼロ、最悪の場合は最低賃金を下回ることも。", tip: "💡 就活ポイント：「固定給はいくらですか？」「最低保証はありますか？」「雇用形態は正社員ですか？業務委託ですか？」を確認しましょう。" },
+  { id: 3, difficulty: "normal", jobAd: { title: "株式会社グローイング｜総合職（第二新卒・既卒歓迎）", salary: "月給22万円（試用期間3ヶ月は月給18万円）", hours: "8:30～17:30", holiday: "完全週休2日制（土日）祝日休み", welfare: "社会保険完備、住宅手当あり、退職金制度あり", appeal: "年間離職率5%以下！働きやすさNo.1を目指す会社。社員の声を大切にする風通しの良い職場。研修制度充実！" }, question: "この求人票の中で確認・注意すべき点として最も重要なものは？", choices: ["試用期間中の給与が低い点", "第二新卒・既卒歓迎という表現", "「年間離職率5%以下」の根拠と定義", "住宅手当の支給条件"], answer: 2, explanation: "「年間離職率5%以下」という数字は計算方法によって大きく変わります。正社員のみか、直近1年か複数年平均かで全く異なります。", tip: "💡 就活ポイント：離職率は「どんな計算方法で出した数字か」「直近何年分のデータか」を確認しましょう。" },
+  { id: 4, difficulty: "normal", jobAd: { title: "株式会社サンライズ｜事務スタッフ（正社員）", salary: "月給16万円～18万円", hours: "9:00～17:30（実働7.5時間）", holiday: "土日祝休み・年間休日124日", welfare: "社会保険完備、交通費全額支給、産休・育休実績あり", appeal: "残業少なめ！定時退社率80%以上！女性が長く活躍できる職場です。産育休取得・復帰実績100%！" }, question: "この求人票で最も信頼性の高いポイントはどれですか？", choices: ["「残業少なめ」という表現", "「定時退社率80%以上」という数字", "「産育休取得・復帰実績100%」という具体的な実績", "月給16万円という給与水準"], answer: 2, explanation: "「産育休取得・復帰実績100%」は具体的な数字であり、実態を反映している可能性が高い情報です。「残業少なめ」などの曖昧な表現より信頼できます。", tip: "💡 就活ポイント：「実績〇〇%」など具体的な数字がある情報は評価できます。面接で詳細を確認するとさらに安心です。" },
+  { id: 5, difficulty: "normal", jobAd: { title: "株式会社ドリームキャリア｜総合職", salary: "月給20万円＋各種手当（詳細は面接時に説明）", hours: "8:45～17:45", holiday: "年間休日110日（土日＋祝日一部）", welfare: "社会保険完備", appeal: "20代・30代が中心の活気ある職場！スピード昇格チャンスあり！実力があればどんどん上に行ける環境！" }, question: "この求人票で最も注意すべき不透明な点はどれですか？", choices: ["年間休日110日という休日数", "「各種手当（詳細は面接時）」という給与の不透明さ", "「スピード昇格」という表現", "20代・30代中心という職場環境"], answer: 1, explanation: "「詳細は面接時に説明」という手当の不透明さは大きな危険信号です。基本給と手当の内訳を事前に開示しない求人は、実際の給与が期待より低い可能性があります。", tip: "💡 就活ポイント：給与の内訳は応募前にできる限り確認しましょう。面接まで内訳を教えない求人は要注意です。" },
+  { id: 6, difficulty: "normal", jobAd: { title: "株式会社ハーモニー｜カスタマーサポートスタッフ", salary: "時給1,200円～1,500円", hours: "シフト制（週3日～OK）", holiday: "シフトによる", welfare: "社会保険完備（週20時間以上）、交通費支給", appeal: "週3日から働けます！プライベートとの両立が可能。スタッフ同士の仲が良くアットホームな職場です！" }, question: "この求人で「社会保険完備」が適用されない可能性があるのはどんな人ですか？", choices: ["週3日・1日6時間未満で働く人", "時給1,200円で働く人", "交通費を受け取る人", "シフトで土日に働く人"], answer: 0, explanation: "社会保険加入には「週20時間以上」などの要件があります。週3日・1日6時間未満だと週18時間未満となり、加入対象外になる可能性があります。", tip: "💡 就活ポイント：「社会保険完備」でも自分の勤務時間が加入要件を満たすか確認しましょう。週20時間以上が基本の目安です。" },
+  { id: 7, difficulty: "normal", jobAd: { title: "株式会社パワーアップ｜飲食店スタッフ（社員）", salary: "月給22万円（深夜手当・交通費込み）", hours: "11:00～23:00のシフト制（実働8時間）", holiday: "週休2日（シフトによる）", welfare: "賄いあり、社会保険完備", appeal: "食べることが好きな人歓迎！チームワーク抜群の職場です！社員登用制度あり！" }, question: "この求人票で給与に関して最も確認すべきことは？", choices: ["賄いが含まれているかどうか", "「深夜手当・交通費込み」の具体的な金額と基本給の内訳", "社員登用制度の詳細", "シフトの具体的な組み方"], answer: 1, explanation: "「深夜手当・交通費込み」の場合、22万円の中にこれらが含まれており基本給が低い可能性があります。深夜勤務が多ければ深夜割増は当然支払われるべきものです。", tip: "💡 就活ポイント：飲食・小売など深夜業がある職場では「基本給はいくらか」「深夜手当は別途支給か込みか」を必ず確認しましょう。" },
+  { id: 8, difficulty: "normal", jobAd: { title: "株式会社ネクストステージ｜ITエンジニア（未経験歓迎）", salary: "月給20万円～35万円（経験・スキルによる）", hours: "9:00～18:00（フレックス可）", holiday: "完全週休2日制（土日祝）年間休日125日", welfare: "社会保険完備、リモートワーク可、資格取得支援制度", appeal: "未経験からエンジニアへ！充実の研修制度で3ヶ月でデビュー！資格取得費用全額会社負担！" }, question: "この求人票で最も実態と乖離している可能性がある表現はどれですか？", choices: ["「年間休日125日」という休日数", "「未経験から3ヶ月でエンジニアデビュー」という表現", "「リモートワーク可」という働き方", "「資格取得費用全額負担」という福利厚生"], answer: 1, explanation: "「3ヶ月でエンジニアデビュー」は誇張表現の可能性があります。実態はSEとして客先常駐で雑務から始まるケースも多く、スキルが身につくまで時間がかかります。", tip: "💡 就活ポイント：「未経験歓迎ITエンジニア」求人は、研修内容・配属先・具体的な業務内容を詳しく確認しましょう。" },
+  { id: 14, difficulty: "normal", jobAd: { title: "株式会社ブライトスター｜接客・販売スタッフ", salary: "月給18万円（昇給年1回）", hours: "シフト制 10:00～21:00の間で実働8時間", holiday: "月9日休み（シフトによる）", welfare: "社会保険完備、社員割引あり", appeal: "人と話すのが好きな方大歓迎！店長候補として早期活躍のチャンスあり！" }, question: "この求人で「月9日休み」について最も注意すべき点は？", choices: ["月9日は少なすぎて違法である", "「月9日」はシフト次第で土日が全くない可能性がある", "月9日休みは年間休日108日になり問題ない", "小売業では月9日休みが標準的で問題ない"], answer: 1, explanation: "「月9日休み・シフトによる」は土日祝が一切休めない可能性があります。友人や家族と予定が合わず孤立感を感じる人も多いです。入社前に「土日の休み取得は可能か」を確認しましょう。", tip: "💡 就活ポイント：シフト制の求人では「土日に休める頻度」「希望休の取りやすさ」を面接で確認することが重要です。" },
+  { id: 15, difficulty: "normal", jobAd: { title: "株式会社ハッピーライフ｜介護スタッフ（正社員）", salary: "月給20万円＋処遇改善手当3万円", hours: "早番・日勤・遅番・夜勤のシフト制", holiday: "月8日（シフト制）", welfare: "社会保険完備、夜勤手当あり、資格取得支援", appeal: "介護未経験OK！資格取得のサポート充実。夜勤なしも相談可！人のために働きたい方歓迎！" }, question: "この求人の給与表記で確認すべき点はどれですか？", choices: ["処遇改善手当3万円は信頼できる数字", "「月給20万円＋処遇改善手当3万円」の処遇改善手当が毎月確実に支払われるか", "夜勤なしを選ぶと給与が下がる可能性", "社会保険完備が介護職でも適用されるか"], answer: 1, explanation: "処遇改善手当は国の補助金が原資のため、制度変更・事業所の申請状況によって減額・廃止されることがあります。「必ず毎月3万円もらえる」とは限りません。", tip: "💡 就活ポイント：介護職の手当は国の制度に依存するものがあります。「手当の継続性・安定性」を面接で確認しましょう。" },
+  { id: 16, difficulty: "normal", jobAd: { title: "株式会社ファーストムーバー｜新規事業担当", salary: "月給25万円（固定残業代45時間分含む）", hours: "9:00～18:00（残業あり）", holiday: "完全週休2日（土日）年間休日120日", welfare: "社会保険完備、交通費支給", appeal: "新規事業立ち上げメンバー募集！スタートアップ気質の環境で裁量を持って働けます！成長したい方必見！" }, question: "「固定残業代45時間分含む」について正しい理解はどれですか？", choices: ["45時間以内の残業なら実質残業代ゼロで合法", "45時間を超えた残業代は別途支払いが必要で、基本給が低い可能性がある", "固定残業代制度は違法なので、この求人は問題がある", "45時間の残業は月に1日2時間程度で現実的な範囲"], answer: 1, explanation: "固定残業代制度自体は合法ですが、45時間超は別途支払いが必要です。また月45時間残業前提で設計された給与は、実質的な時給が低くなる場合があります。基本給を必ず確認しましょう。", tip: "💡 就活ポイント：固定残業代込みの求人では「基本給はいくらか」「実際の平均残業時間はどのくらいか」を確認しましょう。" },
+  { id: 17, difficulty: "normal", jobAd: { title: "株式会社ワールドビジョン｜海外営業職", salary: "年収350万円～600万円", hours: "9:00～18:00（海外出張あり）", holiday: "土日祝・年間休日122日", welfare: "社会保険完備、海外赴任手当あり", appeal: "語学力を活かしたい方歓迎！海外出張・赴任のチャンス！グローバルに活躍できる環境！" }, question: "この求人で「海外赴任」に関して特に確認すべきことは？", choices: ["海外赴任の頻度と期間、赴任先の国・地域", "語学の必要レベル", "社会保険が海外でも適用されるか", "年収350万円は海外赴任中も変わらないか"], answer: 0, explanation: "「海外赴任のチャンス」は魅力に見えますが、拒否できるか・赴任先の安全性・単身赴任になるか・期間の見通しなど、生活に大きく影響する条件を事前確認が必要です。", tip: "💡 就活ポイント：海外赴任は「命令か希望制か」「赴任先の選択権があるか」「家族帯同は可能か」を必ず確認しましょう。" },
+  // ===== むずかしい =====
+  { id: 9, difficulty: "hard", jobAd: { title: "ベンチャー株式会社ライズアップ｜企画営業", salary: "月給20万円以上※経験・能力考慮", hours: "裁量労働制（みなし労働9時間）", holiday: "年間休日105日", welfare: "交通費支給", appeal: "成長企業でキャリアアップ！若手に大きな仕事を任せます。経営陣との距離が近くスピード感ある環境！" }, question: "この求人で最も注意が必要な「隠れたリスク」はどれですか？", choices: ["「月給20万円以上」という曖昧な表記", "裁量労働制（みなし労働9時間）の組み合わせ", "年間休日105日という休日数", "ベンチャー企業であること"], answer: 1, explanation: "「裁量労働制＋みなし9時間」が最大のリスクです。裁量労働制では実際の労働時間に関わらず9時間働いたとみなされ、どれだけ残業しても追加の残業代が出ません。", tip: "💡 就活ポイント：裁量労働制は「みなし時間を超えた場合の扱い」「実際の平均残業時間」を確認しましょう。" },
+  { id: 10, difficulty: "hard", jobAd: { title: "株式会社グローバルコンサル｜コンサルタント職", salary: "年俸制：400万～800万円（残業代込み）", hours: "専門業務型裁量労働制（みなし10時間）", holiday: "完全週休2日（土日）年間休日120日", welfare: "社会保険完備、確定拠出年金あり", appeal: "プロとして活躍したい方へ！クライアントの課題解決に直接関与。急成長中のコンサルティングファームです！" }, question: "「年俸制・残業代込み」について最も正確な説明はどれですか？", choices: ["年俸制なら残業代が含まれるのは当然で問題ない", "裁量労働制でも深夜・休日労働の割増賃金は別途必要な場合がある", "みなし10時間労働なので残業は発生しない", "コンサルタントは残業代対象外の職種である"], answer: 1, explanation: "裁量労働制でも、深夜・休日労働の割増賃金は別途支払いが必要です。「残業代込み」という表現で深夜・休日手当まで含めようとするのは違法になります。", tip: "💡 就活ポイント：年俸制・裁量労働制でも「深夜手当」「休日手当」は別途請求できます。面接で確認しましょう。" },
+  { id: 11, difficulty: "hard", jobAd: { title: "株式会社スマートワーク｜人事・労務担当", salary: "月給25万円～30万円", hours: "9:00～18:00（所定労働8時間）、時間外あり", holiday: "年間休日120日・有給消化率80%以上", welfare: "社会保険完備・退職金あり・育休取得率男性30%", appeal: "働き方改革推進中！ノー残業デー週2回実施。有給が取りやすい環境。男性の育休取得も積極推進！" }, question: "この求人票の情報で最も信頼性が高いと判断できるのはどれですか？", choices: ["「有給消化率80%以上」という数字", "「男性育休取得率30%」という具体的な数値", "「ノー残業デー週2回」という制度", "「働き方改革推進中」というアピール"], answer: 1, explanation: "「男性育休取得率30%」は厚生労働省の調査（全国平均約17%）と比較できる具体的数値であり、他の抽象的な表現より実態を反映している可能性が高いです。", tip: "💡 就活ポイント：業界平均や全国平均と比較できる数値は信頼性が高い。根拠を面接で確認するとさらに安心です。" },
+  { id: 12, difficulty: "hard", jobAd: { title: "株式会社フレキシブル｜営業職", salary: "基本給15万円＋インセンティブ（平均月収32万円）", hours: "9:00～18:00", holiday: "土日祝休み", welfare: "社会保険完備", appeal: "頑張れば稼げる！昨年のトップ営業マンは年収650万円達成！実力次第で収入が大きく変わります！" }, question: "「平均月収32万円」という表記で最も注意すべき点は何ですか？", choices: ["32万円は業界水準と比べて高すぎる", "平均の計算に上位成績者が含まれ実態より高く見せている可能性", "インセンティブ制度そのものが違法である", "基本給15万円は最低賃金を下回っている"], answer: 1, explanation: "「平均月収」はトップ成績者を含む計算で実態より高く見せている場合があります。基本給15万円という低さを隠すために使われる典型的な手法です。中央値や下位層の収入を確認しましょう。", tip: "💡 就活ポイント：インセンティブ制の求人では「平均」ではなく「中央値」や「1年目の平均収入」を聞くのが効果的です。" },
+  { id: 13, difficulty: "hard", jobAd: { title: "株式会社テクノソリューション｜SE・プログラマー", salary: "月給22万円～40万円（経験考慮）", hours: "変形労働時間制（1ヶ月単位）", holiday: "年間休日120日", welfare: "社会保険完備、資格手当あり", appeal: "SIer最大手グループ！上流工程から参加できる案件多数。技術力を磨きたいエンジニア大歓迎！" }, question: "「変形労働時間制（1ヶ月単位）」について正しい理解はどれですか？", choices: ["残業代がまったく発生しない制度である", "1ヶ月の総労働時間が法定範囲内なら時間外割増は発生しないが、上限を超えると発生する", "残業は月45時間まで無制限に認められる", "管理職のみに適用される制度である"], answer: 1, explanation: "1ヶ月単位の変形労働時間制では、1ヶ月の法定労働時間の総枠を超えた部分は時間外労働となり割増賃金が必要です。残業代ゼロにはなりません。", tip: "💡 就活ポイント：「変形労働時間制」は繁忙期に長く働かせる仕組み。1ヶ月の平均残業時間と繁忙期の最大労働時間を確認しましょう。" },
+  { id: 18, difficulty: "hard", jobAd: { title: "株式会社プロフェッショナル｜管理職候補（マネージャー）", salary: "月給35万円（管理職のため残業代なし）", hours: "9:00～（時間管理なし）", holiday: "土日祝・年間休日120日", welfare: "社会保険完備、役職手当あり", appeal: "入社1年でマネージャーに！若くして管理職を経験できる数少ないチャンス！裁量ある働き方！" }, question: "「管理職のため残業代なし」について最も正しい判断はどれですか？", choices: ["管理職なら残業代が出ないのは当然で合法", "「管理監督者」の要件を満たさない名ばかり管理職なら残業代の支払いが必要", "入社1年でマネージャーになれる会社は優良企業の証", "月給35万円なら残業代なしでも十分な水準"], answer: 1, explanation: "残業代が不要な「管理監督者」には、経営への関与・労働時間の自由・優遇された待遇という3要件が必要です。「入社1年でマネージャー」は名ばかり管理職のリスクが高く、要件を満たさない場合は残業代請求が可能です。", tip: "💡 就活ポイント：管理職でも「出退勤の自由」「経営への関与度」「部下の人数」を確認し、名ばかり管理職でないかチェックしましょう。" },
+  { id: 19, difficulty: "hard", jobAd: { title: "株式会社インディペンデント｜業務委託スタッフ", salary: "報酬：月40万円～（成果次第）", hours: "自由（フルリモート）", holiday: "自由", welfare: "なし（個人事業主扱い）", appeal: "自由な働き方で高収入！副業・Wワーク歓迎！週2日から稼働可能！スキルを活かして独立を目指せ！" }, question: "この「業務委託」の求人で最も注意すべきリスクはどれですか？", choices: ["フルリモートで働けること", "社会保険がなく、税金・年金をすべて自己負担する必要がある", "週2日から稼働できること", "副業・Wワークが歓迎されていること"], answer: 1, explanation: "業務委託（個人事業主）は社会保険・雇用保険なし。税金は確定申告が必要で国民健康保険・国民年金を全額自己負担します。また労働基準法が適用されず、突然の契約打ち切りリスクもあります。", tip: "💡 就活ポイント：業務委託は「雇用ではない」ため労働者保護が受けられません。安定した収入が保証されるか、社会保障を自分で計算して手取りを確認しましょう。" },
+  { id: 20, difficulty: "hard", jobAd: { title: "株式会社アドバンテージ｜人材コーディネーター", salary: "月給22万円＋歩合（平均月収28万円）", hours: "9:00～18:00", holiday: "土日祝・年間休日120日", welfare: "社会保険完備", appeal: "人の役に立てる仕事！転職支援・採用支援の経験が積める。営業経験者優遇！" }, question: "「平均月収28万円」を鵜呑みにしてはいけない最大の理由は？", choices: ["人材業界の平均月収としては低すぎる", "歩合部分が含まれるため個人差が大きく、全員が28万円もらえるわけではない", "基本給22万円より平均が低いのは計算がおかしい", "人材コーディネーターは残業が多く手取りが少ない"], answer: 1, explanation: "「平均」には高成績者が引き上げた数字が含まれており、新入社員・成績下位層の収入を反映していません。入社直後の現実的な収入は基本給22万円に近い可能性が高いです。", tip: "💡 就活ポイント：歩合・インセンティブがある求人は「1年目の平均収入」と「最低収入（基本給のみ）」の両方を聞きましょう。" },
+  { id: 21, difficulty: "hard", jobAd: { title: "株式会社オールマイティ｜総合職（転勤あり）", salary: "月給23万円～（転勤手当別途支給）", hours: "9:00～18:00", holiday: "完全週休2日・年間休日123日", welfare: "社会保険完備、引越し費用会社負担", appeal: "全国に拠点あり！様々な地域でキャリアを積める！転勤で視野が広がる！全国転勤歓迎者優遇！" }, question: "「転勤あり」の求人で就職前に最も確認すべきことはどれですか？", choices: ["引越し費用が全額負担されるか", "転勤命令を拒否できるか、拒否した場合どうなるか", "転勤先の地域と頻度・本人の希望は考慮されるか", "転勤手当の金額"], answer: 2, explanation: "転勤命令は原則として拒否できますが、就業規則に転勤条項があり合理的理由があれば従う義務が生じます。拒否すると懲戒・降格・解雇リスクがあります。転勤頻度・希望考慮・単身赴任の扱いを事前確認しましょう。", tip: "💡 就活ポイント：「転勤あり」求人は「転勤の頻度」「希望地域は考慮されるか」「転勤拒否した場合の扱い」を面接で確認してください。" },
+];
+
+
+// ============================================================
+// STATE
+// ============================================================
+let bwQuestions = [...DEFAULT_BW_QUESTIONS];
+let kqQuestions = [...DEFAULT_KQ_QUESTIONS];
+let nickname = localStorage.getItem("bw_nickname") || "";
+let currentBWPool = [];
+let bwIdx = 0, bwScore = 0;
+let currentKQPool = [];
+let kqIdx = 0, kqScore = 0;
+let addBWAnswer = "black";
+
+// ============================================================
+// HELPERS
+// ============================================================
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function getRankInfo(correct, total) {
+  const pct = correct / total;
+  if (pct <= 0.3) return { rank: "社畜予備軍", icon: "😵", color: "#ff6b6b", message: "まだまだ学びが必要です。労働者の権利をしっかり覚えよう！" };
+  if (pct <= 0.7) return { rank: "一般社員", icon: "😊", color: "#ffd700", message: "基本的な知識はあります。グレーゾーンの見極めを磨こう！" };
+  return { rank: "ブラック企業ハンター", icon: "🔥", color: "#00e676", message: "素晴らしい！労働者の権利に精通したエキスパートです！" };
+}
+function saveStorage() {
+  // Firestoreが使えない場合のフォールバックとしてlocalStorageにも保存
+  localStorage.setItem(STORAGE_KEY_BW, JSON.stringify(bwQuestions));
+  localStorage.setItem(STORAGE_KEY_KQ, JSON.stringify(kqQuestions));
+}
+
+// ============================================================
+// SCREEN NAVIGATION
+// ============================================================
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-' + id).classList.add('active');
+  if (id === 'home') {
+    subscribeHomeRanking();
+    // GA event
+    if (typeof gtag === 'function') gtag('event', 'page_view', { page_title: 'ホーム' });
+  } else {
+    if (typeof window.unsubscribeRanking === 'function') window.unsubscribeRanking();
+  }
+}
+
+// ============================================================
+// NICKNAME (legacy stub – replaced by modal)
+// ============================================================
+
+// ============================================================
+// RANKING
+// ============================================================
+function subscribeHomeRanking() {
+  if (typeof window.subscribeRanking !== 'function') return;
+  window.subscribeRanking(renderRanking);
+}
+function renderRanking(data) {
+  const el = document.getElementById('rankingList');
+  const medals = ['🥇','🥈','🥉'];
+  if (data.length === 0) {
+    el.innerHTML = '<div class="rank-empty-home">まだランキングデータがありません<br>ゲームをプレイしてランクイン！</div>';
+    return;
+  }
+  el.innerHTML = data.map((r, i) => `
+    <div class="ranking-row">
+      ${i < 3 ? `<span class="rank-medal">${medals[i]}</span>` : `<span class="rank-num-other">${i+1}</span>`}
+      <span class="rank-name">${escHtml(r.name || 'ゲスト')}</span>
+      <span class="rank-pts">${r.score}<span>pt</span></span>
+    </div>
+  `).join('');
+}
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ============================================================
+// BW QUIZ
+// ============================================================
+function goToBWDiff() { showScreen('bw-diff'); }
+function startBWQuiz(difficulty) {
+  const filtered = difficulty === 'all' ? bwQuestions : bwQuestions.filter(q => q.difficulty === difficulty);
+  currentBWPool = shuffle(filtered).slice(0, Math.min(10, filtered.length));
+  bwIdx = 0; bwScore = 0;
+  showScreen('bw-quiz');
+  renderBWQuestion();
+  const badge = document.getElementById('bwDiffBadge');
+  badge.textContent = difficulty === 'hard' ? 'むずかしい' : difficulty === 'all' ? 'MIX' : 'ふつう';
+  badge.className = 'header-badge ' + (difficulty === 'hard' ? 'badge-hard' : 'badge-normal');
+  if (typeof gtag === 'function') gtag('event', 'quiz_start', { quiz_type: 'bw', difficulty });
+}
+function renderBWQuestion() {
+  const q = currentBWPool[bwIdx];
+  const pct = (bwIdx / currentBWPool.length) * 100;
+  document.getElementById('bwProgressNum').textContent = `${bwIdx+1} / ${currentBWPool.length}`;
+  document.getElementById('bwProgressScore').textContent = `⭐ ${bwScore}点`;
+  document.getElementById('bwProgressFill').style.width = pct + '%';
+  const chip = document.getElementById('bwDiffChip');
+  chip.textContent = q.difficulty === 'hard' ? '🔥 むずかしい' : '🌙 ふつう';
+  chip.className = 'diff-chip ' + (q.difficulty === 'hard' ? 'badge-hard' : 'badge-normal');
+  document.getElementById('bwQuestion').textContent = 'Q. ' + q.question;
+  document.getElementById('bwExplanation').style.display = 'none';
+  document.getElementById('bwNextBtn').style.display = 'none';
+  const btnB = document.getElementById('btnBlack');
+  const btnW = document.getElementById('btnWhite');
+  btnB.disabled = false; btnW.disabled = false;
+  btnB.className = 'bw-choice-btn choice-black';
+  btnW.className = 'bw-choice-btn choice-white';
+}
+function answerBW(choice) {
+  const q = currentBWPool[bwIdx];
+  const correct = choice === q.answer;
+  if (correct) bwScore++;
+  const btnB = document.getElementById('btnBlack');
+  const btnW = document.getElementById('btnWhite');
+  btnB.disabled = true; btnW.disabled = true;
+  if (choice === 'black') btnB.classList.add(correct ? 'choice-correct' : 'choice-wrong');
+  else btnW.classList.add(correct ? 'choice-correct' : 'choice-wrong');
+  if (q.answer === 'black') btnB.classList.add('choice-correct');
+  else btnW.classList.add('choice-correct');
+  const badge = document.getElementById('bwAnswerBadge');
+  badge.textContent = correct ? '✓ 正解！' : '✗ 不正解';
+  badge.className = 'answer-badge ' + (correct ? 'badge-correct' : 'badge-wrong');
+  document.getElementById('bwCorrectAnswer').textContent = `正解: ${q.answer === 'black' ? '🖤 ブラック' : '🤍 ホワイト'}`;
+  document.getElementById('bwExplanationText').textContent = q.explanation;
+  document.getElementById('bwExplanation').style.display = 'block';
+  const nextBtn = document.getElementById('bwNextBtn');
+  nextBtn.textContent = bwIdx + 1 >= currentBWPool.length ? '結果を見る 🎉' : '次の問題へ →';
+  nextBtn.style.display = 'block';
+  if (typeof gtag === 'function') gtag('event', 'answer', { quiz_type:'bw', correct, question_id: q.id });
+}
+function nextBWQuestion() {
+  if (bwIdx + 1 >= currentBWPool.length) {
+    showBWResult();
+  } else {
+    bwIdx++;
+    renderBWQuestion();
+  }
+}
+async function showBWResult() {
+  const total = currentBWPool.length;
+  const info = getRankInfo(bwScore, total);
+  document.getElementById('bwResultIcon').textContent = info.icon;
+  document.getElementById('bwResultRank').textContent = info.rank;
+  document.getElementById('bwResultScore').textContent = bwScore;
+  document.getElementById('bwResultTotal').textContent = total;
+  document.getElementById('bwResultMessage').textContent = info.message;
+  document.getElementById('bwResultPlayer').textContent = nickname || 'ゲスト';
+  document.getElementById('bwResultCorrect').textContent = bwScore + '問';
+  document.getElementById('bwResultWrong').textContent = (total - bwScore) + '問';
+  document.getElementById('bwResultPct').textContent = Math.round(bwScore / total * 100) + '%';
+  document.getElementById('bwResultTitle').textContent = info.rank;
+  document.getElementById('bwSaveMsg').style.display = 'none';
+  showScreen('bw-result');
+  if (typeof gtag === 'function') gtag('event', 'quiz_complete', { quiz_type:'bw', score: bwScore, total });
+  if (typeof window.saveScore === 'function') {
+    const pts = Math.round(bwScore / total * 100);
+    const ok = await window.saveScore(nickname || 'ゲスト', pts);
+    if (ok) document.getElementById('bwSaveMsg').style.display = 'block';
+  }
+}
+
+// ============================================================
+// KYUJIN QUIZ
+// ============================================================
+function goToKyujin() { showScreen('kq-diff'); }
+function startKyujinQuiz(difficulty) {
+  const filtered = difficulty === 'all' ? kqQuestions : kqQuestions.filter(q => q.difficulty === difficulty);
+  currentKQPool = shuffle(filtered).slice(0, Math.min(10, filtered.length));
+  kqIdx = 0; kqScore = 0;
+  showScreen('kyujin');
+  renderKQQuestion();
+  const badge = document.getElementById('kqProgress');
+  badge.className = 'header-badge ' + (difficulty === 'hard' ? 'badge-hard' : 'badge-normal');
+  if (typeof gtag === 'function') gtag('event', 'quiz_start', { quiz_type: 'kyujin', difficulty });
+}
+function renderKQQuestion() {
+  const q = currentKQPool[kqIdx];
+  document.getElementById('kqProgress').textContent = `${kqIdx+1}/${currentKQPool.length}`;
+  document.getElementById('kqAdTitle').textContent = q.jobAd.title;
+  document.getElementById('kqAdRows').innerHTML = [
+    ['給与', q.jobAd.salary], ['時間', q.jobAd.hours],
+    ['休日', q.jobAd.holiday], ['福利厚生', q.jobAd.welfare]
+  ].map(([k,v]) => `<div class="job-ad-row"><span class="job-ad-key">${k}:</span><span class="job-ad-val">${escHtml(v)}</span></div>`).join('');
+  document.getElementById('kqAdAppeal').textContent = q.jobAd.appeal;
+  document.getElementById('kqQuestion').textContent = '❓ ' + q.question;
+  document.getElementById('kqChoices').innerHTML = q.choices.map((c, i) =>
+    `<button class="kq-choice" id="kqBtn${i}" onclick="answerKQ(${i})">${String.fromCharCode(65+i)}. ${escHtml(c)}</button>`
+  ).join('');
+  document.getElementById('kqExplanation').style.display = 'none';
+}
+function answerKQ(i) {
+  const q = currentKQPool[kqIdx];
+  const correct = i === q.answer;
+  if (correct) kqScore++;
+  for (let j = 0; j < q.choices.length; j++) {
+    const btn = document.getElementById('kqBtn' + j);
+    btn.disabled = true;
+    if (j === q.answer) btn.classList.add('kq-correct');
+    else if (j === i) btn.classList.add('kq-wrong');
+  }
+  const badge = document.getElementById('kqAnswerBadge');
+  badge.textContent = correct ? '✓ 正解！さすがです！' : '✗ 不正解...要チェック！';
+  badge.className = 'answer-badge ' + (correct ? 'badge-correct' : 'badge-wrong');
+  document.getElementById('kqExpText').textContent = q.explanation;
+  document.getElementById('kqTip').textContent = q.tip;
+  const nextBtn = document.querySelector('#kqExplanation .next-btn');
+  nextBtn.textContent = kqIdx + 1 >= currentKQPool.length ? '結果を見る 🎉' : '次の問題へ →';
+  document.getElementById('kqExplanation').style.display = 'block';
+  if (typeof gtag === 'function') gtag('event', 'answer', { quiz_type:'kyujin', correct, question_id: q.id });
+}
+function nextKQQuestion() {
+  if (kqIdx + 1 >= currentKQPool.length) {
+    showKQResult();
+  } else {
+    kqIdx++;
+    renderKQQuestion();
+  }
+}
+function showKQResult() {
+  const total = currentKQPool.length;
+  const pct = Math.round(kqScore / total * 100);
+  document.getElementById('kqResultIcon').textContent = pct >= 80 ? '🕵️' : pct >= 50 ? '😊' : '😵';
+  document.getElementById('kqResultRank').textContent = pct >= 80 ? '求人詐欺ハンター' : pct >= 50 ? '就活中級者' : '要注意！カモリスト入り';
+  document.getElementById('kqResultScore').textContent = kqScore;
+  document.getElementById('kqResultTotal').textContent = total;
+  document.getElementById('kqResultMessage').textContent = pct >= 80 ? '完璧！求人詐欺に騙されない目を持っています！' : pct >= 50 ? 'まずまず。もう少し注意深く求人票を読む練習をしよう！' : '危険！この調子では騙されてしまうかも。知識を磨こう！';
+  document.getElementById('kqResultPlayer').textContent = nickname || 'ゲスト';
+  document.getElementById('kqResultCorrect').textContent = kqScore + '問';
+  document.getElementById('kqResultPct').textContent = pct + '%';
+  showScreen('kq-result');
+  if (typeof gtag === 'function') gtag('event', 'quiz_complete', { quiz_type:'kyujin', score: kqScore, total });
+}
+
+// ============================================================
+// SETTINGS
+// ============================================================
+function openSettingsModal() {
+  document.getElementById('pwModal').classList.add('active');
+  document.getElementById('pwInput').value = '';
+  document.getElementById('pwError').textContent = '';
+  setTimeout(() => document.getElementById('pwInput').focus(), 100);
+}
+function closeModal() { document.getElementById('pwModal').classList.remove('active'); }
+function submitPassword() {
+  const val = document.getElementById('pwInput').value;
+  if (val === SETTINGS_PASSWORD) {
+    closeModal();
+    showScreen('settings');
+    renderSettingsLists();
+  } else {
+    document.getElementById('pwError').textContent = 'パスワードが違います';
+    document.getElementById('pwInput').value = '';
+  }
+}
+document.getElementById('pwInput').addEventListener('keydown', e => { if (e.key === 'Enter') submitPassword(); });
+
+function switchTab(tab) {
+  document.getElementById('settingsBW').style.display = tab === 'bw' ? 'block' : 'none';
+  document.getElementById('settingsKQ').style.display = tab === 'kyujin' ? 'block' : 'none';
+  document.getElementById('tabBtnBW').classList.toggle('active', tab === 'bw');
+  document.getElementById('tabBtnKQ').classList.toggle('active', tab === 'kyujin');
+}
+function renderSettingsLists() {
+  document.getElementById('bwQList').innerHTML = bwQuestions.map(q => `
+    <div class="q-item">
+      <div class="q-item-text">
+        <span class="q-item-badge ${q.difficulty==='hard'?'badge-hard':'badge-normal'}">${q.difficulty==='hard'?'むず':'ふつう'}</span>
+        <span class="q-item-badge ${q.answer==='black'?'tag-bw':''}">${q.answer==='black'?'🖤ブラック':'🤍ホワイト'}</span><br>
+        ${escHtml(q.question.substring(0,60))}...
+      </div>
+      <div class="q-item-actions">
+        <button class="q-edit-btn" onclick="openEditBWModal(${q.id})">編集</button>
+        <button class="q-del-btn" onclick="delBWQuestion(${q.id})">削除</button>
+      </div>
+    </div>
+  `).join('');
+  document.getElementById('kqQList').innerHTML = kqQuestions.map(q => `
+    <div class="q-item">
+      <div class="q-item-text">${escHtml(q.jobAd.title.substring(0,50))}...</div>
+      <div class="q-item-actions">
+        <button class="q-edit-btn" onclick="openEditKQModal(${q.id})">編集</button>
+        <button class="q-del-btn" onclick="delKQQuestion(${q.id})">削除</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ============================================================
+// EDIT FUNCTIONS
+// ============================================================
+let editBWAnswer = 'black';
+
+function openEditBWModal(id) {
+  const q = bwQuestions.find(q => q.id === id);
+  if (!q) return;
+  document.getElementById('editBWId').value = id;
+  document.getElementById('editBWQuestion').value = q.question;
+  document.getElementById('editBWExplanation').value = q.explanation;
+  document.getElementById('editBWDifficulty').value = q.difficulty;
+  editBWAnswer = q.answer;
+  document.getElementById('editRadioBlack').className = 'form-radio' + (q.answer==='black'?' active-black':'');
+  document.getElementById('editRadioWhite').className = 'form-radio' + (q.answer==='white'?' active-white':'');
+  document.getElementById('editBWModal').classList.add('active');
+}
+function closeEditBWModal() {
+  document.getElementById('editBWModal').classList.remove('active');
+}
+function editSelectAnswer(val) {
+  editBWAnswer = val;
+  document.getElementById('editRadioBlack').className = 'form-radio' + (val==='black'?' active-black':'');
+  document.getElementById('editRadioWhite').className = 'form-radio' + (val==='white'?' active-white':'');
+}
+function saveEditBW() {
+  const id = Number(document.getElementById('editBWId').value);
+  const q_text = document.getElementById('editBWQuestion').value.trim();
+  const ex = document.getElementById('editBWExplanation').value.trim();
+  const diff = document.getElementById('editBWDifficulty').value;
+  if (!q_text || !ex) return alert('問題文と解説を入力してください');
+  const idx = bwQuestions.findIndex(q => q.id === id);
+  if (idx === -1) return;
+  bwQuestions[idx] = { ...bwQuestions[idx], question: q_text, answer: editBWAnswer, difficulty: diff, explanation: ex };
+  saveStorage();
+  if (typeof window.saveQuestionToFirestore === 'function') window.saveQuestionToFirestore('bw', bwQuestions[idx]);
+  renderSettingsLists();
+  closeEditBWModal();
+}
+
+function openEditKQModal(id) {
+  const q = kqQuestions.find(q => q.id === id);
+  if (!q) return;
+  document.getElementById('editKQId').value = id;
+  document.getElementById('editKQTitle').value = q.jobAd.title;
+  document.getElementById('editKQSalary').value = q.jobAd.salary || '';
+  document.getElementById('editKQHours').value = q.jobAd.hours || '';
+  document.getElementById('editKQHoliday').value = q.jobAd.holiday || '';
+  document.getElementById('editKQWelfare').value = q.jobAd.welfare || '';
+  document.getElementById('editKQAppeal').value = q.jobAd.appeal || '';
+  document.getElementById('editKQQuestion').value = q.question;
+  [0,1,2,3].forEach(i => { document.getElementById('editKQC'+i).value = q.choices[i] || ''; });
+  document.getElementById('editKQAnswer').value = q.answer;
+  document.getElementById('editKQExplanation').value = q.explanation || '';
+  document.getElementById('editKQTip').value = q.tip || '';
+  document.getElementById('editKQModal').classList.add('active');
+}
+function closeEditKQModal() {
+  document.getElementById('editKQModal').classList.remove('active');
+}
+function saveEditKQ() {
+  const id = Number(document.getElementById('editKQId').value);
+  const title = document.getElementById('editKQTitle').value.trim();
+  const question = document.getElementById('editKQQuestion').value.trim();
+  if (!title || !question) return alert('タイトルと設問を入力してください');
+  const idx = kqQuestions.findIndex(q => q.id === id);
+  if (idx === -1) return;
+  kqQuestions[idx] = {
+    ...kqQuestions[idx],
+    jobAd: {
+      title,
+      salary: document.getElementById('editKQSalary').value,
+      hours: document.getElementById('editKQHours').value,
+      holiday: document.getElementById('editKQHoliday').value,
+      welfare: document.getElementById('editKQWelfare').value,
+      appeal: document.getElementById('editKQAppeal').value,
+    },
+    question,
+    choices: [0,1,2,3].map(i => document.getElementById('editKQC'+i).value.trim()),
+    answer: Number(document.getElementById('editKQAnswer').value),
+    explanation: document.getElementById('editKQExplanation').value,
+    tip: document.getElementById('editKQTip').value,
+  };
+  saveStorage();
+  if (typeof window.saveQuestionToFirestore === 'function') window.saveQuestionToFirestore('kq', kqQuestions[idx]);
+  renderSettingsLists();
+  closeEditKQModal();
+}
+function selectAnswer(val) {
+  addBWAnswer = val;
+  document.getElementById('radioBlack').className = 'form-radio' + (val==='black'?' active-black':'');
+  document.getElementById('radioWhite').className = 'form-radio' + (val==='white'?' active-white':'');
+}
+function addBWQuestion() {
+  const q = document.getElementById('addBWQuestion').value.trim();
+  const ex = document.getElementById('addBWExplanation').value.trim();
+  const diff = document.getElementById('addBWDifficulty').value;
+  if (!q || !ex) return alert('問題文と解説を入力してください');
+  const newQ = { id: Date.now(), difficulty: diff, question: q, answer: addBWAnswer, explanation: ex };
+  bwQuestions.push(newQ);
+  saveStorage();
+  if (typeof window.saveQuestionToFirestore === 'function') window.saveQuestionToFirestore('bw', newQ);
+  renderSettingsLists();
+  document.getElementById('addBWQuestion').value = '';
+  document.getElementById('addBWExplanation').value = '';
+}
+function delBWQuestion(id) {
+  bwQuestions = bwQuestions.filter(q => q.id !== id);
+  saveStorage();
+  if (typeof window.deleteQuestionFromFirestore === 'function') window.deleteQuestionFromFirestore('bw', id);
+  renderSettingsLists();
+}
+function addKQQuestion() {
+  const title = document.getElementById('kqTitle').value.trim();
+  const question = document.getElementById('kqQuestion').value.trim();
+  if (!title || !question) return alert('タイトルと設問を入力してください');
+  const choices = [0,1,2,3].map(i => document.getElementById('kqC'+i).value.trim());
+  const newQ = {
+    id: Date.now(),
+    difficulty: document.getElementById('kqDifficulty').value,
+    jobAd: {
+      title,
+      salary: document.getElementById('kqSalary').value,
+      hours: document.getElementById('kqHours').value,
+      holiday: document.getElementById('kqHoliday').value,
+      welfare: document.getElementById('kqWelfare').value,
+      appeal: document.getElementById('kqAppeal').value,
+    },
+    question, choices,
+    answer: Number(document.getElementById('kqAnswer').value),
+    explanation: document.getElementById('kqExplanationInput').value,
+    tip: document.getElementById('kqTipInput').value,
+  };
+  kqQuestions.push(newQ);
+  saveStorage();
+  if (typeof window.saveQuestionToFirestore === 'function') window.saveQuestionToFirestore('kq', newQ);
+  renderSettingsLists();
+}
+function delKQQuestion(id) {
+  kqQuestions = kqQuestions.filter(q => q.id !== id);
+  saveStorage();
+  if (typeof window.deleteQuestionFromFirestore === 'function') window.deleteQuestionFromFirestore('kq', id);
+  renderSettingsLists();
+}
+function resetAll() {
+  if (!confirm('全データをリセットしますか？')) return;
+  bwQuestions = [...DEFAULT_BW_QUESTIONS];
+  kqQuestions = [...DEFAULT_KQ_QUESTIONS];
+  saveStorage();
+  if (typeof window.saveAllQuestionsToFirestore === 'function') window.saveAllQuestionsToFirestore(bwQuestions, kqQuestions);
+  renderSettingsLists();
+}
+
+// ============================================================
+// NICKNAME MODAL
+// ============================================================
+function openNickModal() {
+  document.getElementById('nickModal').classList.add('active');
+  const input = document.getElementById('nickModalInput');
+  input.value = nickname;
+  setTimeout(() => input.focus(), 100);
+}
+function closeNickModal() {
+  document.getElementById('nickModal').classList.remove('active');
+}
+function submitNickModal() {
+  const val = document.getElementById('nickModalInput').value.trim();
+  if (!val) return;
+  nickname = val;
+  localStorage.setItem('bw_nickname', val);
+  updateNickChip();
+  closeNickModal();
+  if (typeof gtag === 'function') gtag('event', 'set_nickname');
+}
+
+function updateNickChip() {
+  const chipText = document.getElementById('nickChipText');
+  const chipEdit = document.getElementById('nickChipEdit');
+  if (nickname) {
+    chipText.textContent = nickname;
+    chipEdit.textContent = '✎';
+  } else {
+    chipText.textContent = 'ニックネームを設定';
+    chipEdit.textContent = '';
+  }
+}
+document.getElementById('nickModalInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitNickModal();
+});
+
+// ============================================================
+// INIT
+// ============================================================
+function initNickname() {
+  updateNickChip();
+  if (!nickname) {
+    setTimeout(() => openNickModal(), 400);
+  }
+}
+
+async function initQuestions() {
+  // Firestoreから問題を読み込む。失敗時はlocalStorage→デフォルトの順でフォールバック
+  if (typeof window.loadQuestionsFromFirestore === 'function') {
+    const data = await window.loadQuestionsFromFirestore();
+    if (data && data.bw && data.bw.length > 0) {
+      bwQuestions = data.bw;
+      kqQuestions = data.kq && data.kq.length > 0 ? data.kq : [...DEFAULT_KQ_QUESTIONS];
+      return;
+    }
+  }
+  // Firestoreに未登録 → localStorageを確認、なければデフォルトをFirestoreに初期書き込み
+  const localBW = JSON.parse(localStorage.getItem(STORAGE_KEY_BW) || 'null');
+  const localKQ = JSON.parse(localStorage.getItem(STORAGE_KEY_KQ) || 'null');
+  bwQuestions = localBW || [...DEFAULT_BW_QUESTIONS];
+  kqQuestions = localKQ || [...DEFAULT_KQ_QUESTIONS];
+  // Firestoreへの初回書き込み
+  if (typeof window.saveAllQuestionsToFirestore === 'function') {
+    window.saveAllQuestionsToFirestore(bwQuestions, kqQuestions);
+  }
+}
+
+initNickname();
+
+// Firebaseのmodule読み込みを待ってから問題・ランキングを初期化
+function tryInit(retries) {
+  if (typeof window.loadQuestionsFromFirestore === 'function') {
+    initQuestions();
+    subscribeHomeRanking();
+  } else if (retries > 0) {
+    setTimeout(() => tryInit(retries - 1), 300);
+  } else {
+    // タイムアウト：localStorageにフォールバック
+    const localBW = JSON.parse(localStorage.getItem(STORAGE_KEY_BW) || 'null');
+    const localKQ = JSON.parse(localStorage.getItem(STORAGE_KEY_KQ) || 'null');
+    bwQuestions = localBW || [...DEFAULT_BW_QUESTIONS];
+    kqQuestions = localKQ || [...DEFAULT_KQ_QUESTIONS];
+  }
+}
+tryInit(15);
+</script>
+</body>
+</html>
